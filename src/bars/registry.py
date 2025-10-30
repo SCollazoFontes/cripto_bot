@@ -1,3 +1,4 @@
+# bars/registry.py
 """
 Fábrica y registro de constructores de micro-velas (BarBuilder).
 """
@@ -7,7 +8,16 @@ from __future__ import annotations
 from typing import Any, Dict, List, Type
 
 from .base import BarBuilder
+from .dollar import DollarBarBuilder
+from .imbalance import ImbalanceBarBuilder
 from .tick_count import TickCountBarBuilder
+from .volume_qty import VolumeQtyBarBuilder
+
+__all__ = [
+    "register_builder",
+    "create_builder",
+    "get_available_builders",
+]
 
 _REGISTRY: Dict[str, Type[BarBuilder]] = {}
 
@@ -28,9 +38,6 @@ def register_builder(name: str, cls: Type[BarBuilder]) -> None:
 
 
 def create_builder(name: str, **kwargs: Any) -> BarBuilder:
-    """
-    Instancia un `BarBuilder` por nombre, propagando `**kwargs` al constructor.
-    """
     key = _normalize(name)
     cls = _REGISTRY.get(key)
     if cls is None:
@@ -43,7 +50,17 @@ def get_available_builders() -> List[str]:
     return sorted(_REGISTRY.keys())
 
 
-# Registro por defecto (aliases)
+# Registro por defecto y aliases
 register_builder("tick_count", TickCountBarBuilder)
 register_builder("tick", TickCountBarBuilder)
 register_builder("ticks", TickCountBarBuilder)
+
+register_builder("volume_qty", VolumeQtyBarBuilder)
+register_builder("volume", VolumeQtyBarBuilder)
+
+register_builder("dollar", DollarBarBuilder)
+register_builder("value", DollarBarBuilder)
+
+register_builder("imbalance", ImbalanceBarBuilder)
+register_builder("imbalance_qty", ImbalanceBarBuilder)
+register_builder("imbalance_tick", ImbalanceBarBuilder)

@@ -1,14 +1,15 @@
+# scr/bars/base.py
 """
 Módulo base para la construcción de micro-velas ("bars").
 
 Define las interfaces principales:
 - Trade: representa un trade individual recibido del exchange.
 - Bar: representa una microvela (agregación mínima).
-- BarBuilder: interfaz abstracta para la construcción incremental de barras
-  según una regla (tick, volumen, dólar, imbalance...).
+- BarBuilder: interfaz abstracta para construir barras con reglas
+  (tick, volumen, dólar, imbalance).
 
-Cada implementación concreta (por ejemplo, TickCountBarBuilder)
-deberá heredar de BarBuilder y definir la lógica de cuándo se cierra una barra.
+Cada implementación concreta (por ejemplo, TickCountBarBuilder) deberá
+heredar de BarBuilder y definir la lógica de cierre de una barra.
 """
 
 from __future__ import annotations
@@ -18,6 +19,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
+__all__ = ["Trade", "Bar", "BarBuilder"]
+
+
 # ============================================================
 # Trade
 # ============================================================
@@ -26,18 +30,18 @@ from typing import List, Optional
 @dataclass
 class Trade:
     """
-    Representa un trade individual recibido del exchange.
+    Trade individual recibido del exchange.
 
-    Attributes
-    ----------
+    Atributos
+    ---------
     price : float
-        Precio al que se ejecutó el trade.
+        Precio de ejecución del trade.
     qty : float
-        Cantidad (volumen) del trade.
+        Cantidad negociada en el trade.
     timestamp : datetime
-        Momento en que se ejecutó el trade (normalizado a UTC).
+        Hora del trade (UTC).
     is_buyer_maker : bool
-        True si el trade fue ejecutado por el "maker" (lado pasivo del libro).
+        True si el comprador fue el maker (lado pasivo).
     """
 
     price: float
@@ -54,10 +58,10 @@ class Trade:
 @dataclass
 class Bar:
     """
-    Representa una microvela agregada a partir de uno o más trades.
+    Microvela agregada a partir de uno o más trades.
 
-    Attributes
-    ----------
+    Atributos
+    ---------
     open : float
         Precio de apertura.
     high : float
@@ -67,13 +71,13 @@ class Bar:
     close : float
         Precio de cierre.
     volume : float
-        Volumen total negociado durante la barra.
+        Volumen total negociado.
     start_time : datetime
-        Marca temporal del primer trade incluido.
+        Marca temporal del primer trade (UTC).
     end_time : datetime
-        Marca temporal del último trade incluido.
+        Marca temporal del último trade (UTC).
     trade_count : int
-        Número total de trades agregados en la barra.
+        Número total de trades incluidos.
     """
 
     open: float
@@ -93,55 +97,48 @@ class Bar:
 
 class BarBuilder(ABC):
     """
-    Interfaz abstracta para la construcción incremental de microvelas.
+    Interfaz abstracta para construir microvelas incrementalmente.
 
-    Cada clase hija definirá una regla específica de cierre, como:
-    - Número fijo de trades (`TickCountBarBuilder`)
-    - Volumen acumulado (`VolumeBarBuilder`)
-    - Imbalance de compra/venta (`ImbalanceBarBuilder`)
-    - Dólar negociado (`DollarBarBuilder`)
-
-    El flujo típico de uso es:
-        builder = TickCountBarBuilder(tick_limit=100)
-        for trade in stream:
-            bar = builder.update(trade)
-            if bar:
-                yield bar
+    Flujo típico
+    ------------
+    builder = TickCountBarBuilder(tick_limit=100)
+    for trade in stream:
+        bar = builder.update(trade)
+        if bar:
+            yield bar
     """
 
     @abstractmethod
     def update(self, trade: Trade) -> Optional[Bar]:
         """
-        Actualiza el estado interno con un nuevo trade y,
-        si se cumple la condición de cierre, devuelve una nueva Bar.
+        Actualiza el estado con un trade. Si se cumple la regla de cierre,
+        devuelve la nueva Bar.
 
-        Parameters
+        Parámetros
         ----------
         trade : Trade
-            Nuevo trade recibido desde el exchange.
+            Trade normalizado.
 
-        Returns
+        Retorna
         -------
         Optional[Bar]
-            La barra cerrada si se cumple la regla de cierre, None en caso contrario.
+            Barra cerrada si se cumple la regla; None en caso contrario.
         """
         raise NotImplementedError
 
     @abstractmethod
     def reset(self) -> None:
-        """
-        Reinicia el estado interno del builder después de cerrar una barra.
-        """
+        """Reinicia el estado interno del builder tras cerrar una barra."""
         raise NotImplementedError
 
     @abstractmethod
     def get_current_trades(self) -> List[Trade]:
         """
-        Devuelve la lista de trades acumulados actualmente en la barra activa.
+        Devuelve la lista de trades acumulados de la barra activa.
 
-        Returns
+        Retorna
         -------
         List[Trade]
-            Lista de trades pendientes de agregación.
+            Copia de los trades pendientes de agregación.
         """
         raise NotImplementedError

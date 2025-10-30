@@ -1,3 +1,4 @@
+# scr/bars/tick_count.py
 """
 Implementación concreta de micro-velas por recuento de trades (tick bars).
 

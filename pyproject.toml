@@ -1,0 +1,40 @@
+# pyproject.toml
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cripto_bot"
+version = "0.1.0"
+description = "Trading casi automático de criptomonedas"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"  # usa "py311" si tu proyecto apunta a 3.11
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+per-file-ignores = { "main.py" = ["E402"], "check_system.py" = ["E402"] }
+
+[tool.ruff.lint.isort]
+known-first-party = ["core"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]  # o ["py311"] si prefieres
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+ignore_missing_imports = true

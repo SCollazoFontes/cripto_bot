@@ -1,0 +1,11 @@
+# entornos y dependencias
+.venv/
+__pycache__/
+*.pyc
+
+# secretos y archivos locales
+.env
+
+# datos y logs
+data/
+logs/

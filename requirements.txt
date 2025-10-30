@@ -1,0 +1,49 @@
+# ============================================================
+# requirements.txt — Dependencias base del proyecto cripto_bot
+# ------------------------------------------------------------
+# Por qué existe este archivo:
+# - Para que el entorno sea reproducible (pip install -r requirements.txt)
+# - Para fijar versiones estables y evitar “me funciona en mi máquina”
+# - Para documentar qué usa cada parte del bot
+#
+# Nota de versiones:
+# - He elegido versiones recientes y estables. Puedes actualizar cuando quieras,
+#   pero te recomiendo hacerlo de forma controlada y con tests.
+# ============================================================
+
+# --- Núcleo científico / datos ---
+# DataFrames: manipulación de datos de mercado, microvelas, métricas
+pandas==2.2.2          
+
+# Cálculo numérico: arrays rápidos, rolling windows, indicadores
+numpy==1.26.4          
+
+# --- Red / APIs / Tiempo real ---
+# Llamadas HTTP sencillas (endpoints REST: símbolos, exchangeInfo, etc.)
+requests==2.32.3       
+
+# Conexión WebSocket para streams de mercado (ticks, order book, etc.)
+websocket-client==1.8.0
+
+# --- Exchange (Binance) ---
+# Cliente cómodo para REST y websockets de Binance (spot/testnet)
+python-binance==1.0.17 
+
+
+# --- Configuración y utilidades ---
+# Cargar configs .yaml (parámetros de estrategia, risk, fees, etc.)
+pyyaml==6.0.2          
+# Logging potente y legible (rotación de logs, niveles, formateo)
+loguru==0.7.2          
+# Salida bonita en terminal (tablas, progreso, colores)
+rich==13.8.1           
+
+# --- Calidad de código (opcional, pero recomendado) ---
+# Formateador automático de código (estilo consistente)
+black==24.8.0          
+# Linter ultrarrápido (pep8 + reglas extra)
+ruff==0.6.9            
+# Tipado estático (detectar bugs por tipos antes de ejecutar)
+mypy==1.11.2           
+# Tests unitarios y de integración
+pytest==8.3.2          

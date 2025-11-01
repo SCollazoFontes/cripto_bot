@@ -78,6 +78,8 @@ class Bar:
         Marca temporal del último trade (UTC).
     trade_count : int
         Número total de trades incluidos.
+    dollar_value : Optional[float]
+        Suma( price * qty ) de la barra
     """
 
     open: float
@@ -88,6 +90,7 @@ class Bar:
     start_time: datetime
     end_time: datetime
     trade_count: int
+    dollar_value: Optional[float] = None
 
 
 # ============================================================

@@ -103,6 +103,7 @@ class DollarBarBuilder(BarBuilder):
         last = trades[-1]
         prices = [t.price for t in trades]
         volume = sum(t.qty for t in trades)
+        dval = sum(t.price * t.qty for t in trades)
 
         return Bar(
             open=first.price,
@@ -113,4 +114,5 @@ class DollarBarBuilder(BarBuilder):
             start_time=first.timestamp,
             end_time=last.timestamp,
             trade_count=len(trades),
+            dollar_value=dval,
         )

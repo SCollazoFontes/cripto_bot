@@ -38,22 +38,22 @@ import glob
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
 # Integración con el validador central
-from src.data.validate import summarize_for_cli, validate
+from data.validate import summarize_for_cli, validate
 
 # ===========================================================================
 # Descubrimiento y lectura de archivos
 # ===========================================================================
 
 
-def _find_latest_file(directory: str, pattern: Optional[str] = None) -> str:
+def _find_latest_file(directory: str, pattern: str | None = None) -> str:
     """Busca el archivo más reciente por mtime dentro de un directorio."""
     directory = directory or "data/bars_live"
-    paths: List[str] = []
+    paths: list[str] = []
 
     if pattern:
         paths = glob.glob(os.path.join(directory, pattern))
@@ -86,29 +86,29 @@ def _read_any(path: str) -> pd.DataFrame:
 
 
 def _quantiles(
-    s: Optional[pd.Series],
-    qs: Tuple[float, ...] = (0.50, 0.90, 0.95, 0.99),
-) -> Dict[str, float]:
+    s: pd.Series | None,
+    qs: tuple[float, ...] = (0.50, 0.90, 0.95, 0.99),
+) -> dict[str, float]:
     """Calcula cuantiles y extremos; devuelve {} si la serie es nula o vacía."""
     if s is None or len(s) == 0:
         return {}
     s = pd.to_numeric(s, errors="coerce").dropna()
     if len(s) == 0:
         return {}
-    out: Dict[str, float] = {"min": float(s.min()), "max": float(s.max())}
+    out: dict[str, float] = {"min": float(s.min()), "max": float(s.max())}
     for q in qs:
         out[f"p{int(q * 100):02d}"] = float(s.quantile(q))
     return out
 
 
-def _has_cols(df: pd.DataFrame, cols: List[str]) -> bool:
+def _has_cols(df: pd.DataFrame, cols: list[str]) -> bool:
     """Comprueba si el DataFrame contiene todas las columnas dadas."""
     return set(cols).issubset(df.columns)
 
 
 def _estimate_time_range_and_rate(
     df: pd.DataFrame,
-) -> Tuple[Optional[int], Optional[float]]:
+) -> tuple[int | None, float | None]:
     """
     Estima rango temporal (ms) y barras/s a partir de t_open/t_close.
     - Si t_open/t_close son numéricos, se asume milisegundos.
@@ -117,7 +117,7 @@ def _estimate_time_range_and_rate(
     t_open = df.get("t_open")
     t_close = df.get("t_close")
 
-    def _to_ms(x: pd.Series) -> Optional[pd.Series]:
+    def _to_ms(x: pd.Series) -> pd.Series | None:
         if x is None:
             return None
         if pd.api.types.is_numeric_dtype(x):
@@ -165,22 +165,22 @@ class Summary:
 
     path: str
     rows: int
-    columns: List[str]
-    t_range_ms: Optional[int]
-    bars_per_sec: Optional[float]
-    duration_ms_stats: Dict[str, float]
-    gap_ms_stats: Dict[str, float]
-    overshoot_stats: Dict[str, float]
-    nulls_pct: Dict[str, float]
+    columns: list[str]
+    t_range_ms: int | None
+    bars_per_sec: float | None
+    duration_ms_stats: dict[str, float]
+    gap_ms_stats: dict[str, float]
+    overshoot_stats: dict[str, float]
+    nulls_pct: dict[str, float]
     local_checks_ok: bool
-    local_failed_checks: List[str]
-    head: List[Dict[str, Any]]
-    tail: List[Dict[str, Any]]
+    local_failed_checks: list[str]
+    head: list[dict[str, Any]]
+    tail: list[dict[str, Any]]
     # Añadimos el resultado del validador externo
-    validation: Dict[str, Any]
+    validation: dict[str, Any]
 
 
-def _compute_local_summary(df: pd.DataFrame, path: str) -> Tuple[Summary, List[str]]:
+def _compute_local_summary(df: pd.DataFrame, path: str) -> tuple[Summary, list[str]]:
     """
     Calcula métricas rápidas y checks locales (no reemplaza al validador).
     Devuelve el Summary (sin validation todavía) y la lista de checks fallidos.
@@ -189,11 +189,11 @@ def _compute_local_summary(df: pd.DataFrame, path: str) -> Tuple[Summary, List[s
     cols = list(df.columns)
 
     # Estadísticos de duración y gap
-    duration_stats: Dict[str, float] = _quantiles(df["duration_ms"]) if "duration_ms" in df else {}
-    gap_stats: Dict[str, float] = _quantiles(df["gap_ms"].dropna()) if "gap_ms" in df else {}
+    duration_stats: dict[str, float] = _quantiles(df["duration_ms"]) if "duration_ms" in df else {}
+    gap_stats: dict[str, float] = _quantiles(df["gap_ms"].dropna()) if "gap_ms" in df else {}
 
     # Overshoot (si existe)
-    overshoot_stats: Dict[str, float] = {}
+    overshoot_stats: dict[str, float] = {}
     for candidate in ("overshoot_pct", "overshoot"):
         if candidate in df:
             overshoot_stats = _quantiles(pd.to_numeric(df[candidate], errors="coerce"))
@@ -211,7 +211,7 @@ def _compute_local_summary(df: pd.DataFrame, path: str) -> Tuple[Summary, List[s
 
     # Checks locales (diagnóstico rápido)
     local_ok = True
-    failed: List[str] = []
+    failed: list[str] = []
 
     if _has_cols(df, ["low", "open", "close", "high"]):
         ok_low = df[["open", "close", "high"]].ge(df["low"], axis=0).all().all()
@@ -264,7 +264,7 @@ def _compute_local_summary(df: pd.DataFrame, path: str) -> Tuple[Summary, List[s
 # ===========================================================================
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """CLI: localiza el último archivo, genera resumen, valida y decide exit code."""
     parser = argparse.ArgumentParser(description="Inspección del último archivo de micro-barras.")
     parser.add_argument(

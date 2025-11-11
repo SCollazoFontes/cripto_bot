@@ -5,7 +5,7 @@ Fábrica y registro de constructores de micro-velas (BarBuilder).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Type
+from typing import Any
 
 from .base import BarBuilder
 from .dollar import DollarBarBuilder
@@ -16,10 +16,11 @@ from .volume_qty import VolumeQtyBarBuilder
 __all__ = [
     "register_builder",
     "create_builder",
+    "create",  # Alias for create_builder
     "get_available_builders",
 ]
 
-_REGISTRY: Dict[str, Type[BarBuilder]] = {}
+_REGISTRY: dict[str, type[BarBuilder]] = {}
 
 
 def _normalize(name: str) -> str:
@@ -31,7 +32,7 @@ def _normalize(name: str) -> str:
     return key
 
 
-def register_builder(name: str, cls: Type[BarBuilder]) -> None:
+def register_builder(name: str, cls: type[BarBuilder]) -> None:
     if not issubclass(cls, BarBuilder):
         raise TypeError(f"{cls!r} debe heredar de BarBuilder.")
     _REGISTRY[_normalize(name)] = cls
@@ -46,8 +47,12 @@ def create_builder(name: str, **kwargs: Any) -> BarBuilder:
     return cls(**kwargs)
 
 
-def get_available_builders() -> List[str]:
+def get_available_builders() -> list[str]:
     return sorted(_REGISTRY.keys())
+
+
+# Alias for convenience (commonly used pattern)
+create = create_builder
 
 
 # Registro por defecto y aliases

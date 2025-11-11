@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 import logging
 import os
@@ -50,7 +50,7 @@ from pathlib import Path
 from queue import Empty, Queue
 import threading
 import time
-from typing import IO, Any, Dict, List, Optional
+from typing import IO, Any
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ except Exception:  # pragma: no cover - si no está instalado
 
 
 def _now_utc_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _sanitize_rule(rule: str) -> str:
@@ -80,7 +80,7 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _to_epoch_ms(dt: Any) -> Optional[int]:
+def _to_epoch_ms(dt: Any) -> int | None:
     """Convierte un datetime/seg/ms a epoch ms (int)."""
     if dt is None:
         return None
@@ -89,12 +89,12 @@ def _to_epoch_ms(dt: Any) -> Optional[int]:
         return int(dt if dt > 2_000_000_000 else dt * 1000)
     if isinstance(dt, datetime):
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return int(dt.timestamp() * 1000)
     return None
 
 
-def _guess_bar_dict(bar: Any) -> Dict[str, Any]:
+def _guess_bar_dict(bar: Any) -> dict[str, Any]:
     """Convierte una barra arbitraria en `dict` serializable.
 
     Soporta:
@@ -133,7 +133,7 @@ def _guess_bar_dict(bar: Any) -> Dict[str, Any]:
         t = d.get("close_time") or d.get("end_time")
         d["t_close"] = _to_epoch_ms(t)
 
-    ordered: Dict[str, Any] = {
+    ordered: dict[str, Any] = {
         "t_open": d.get("t_open"),
         "t_close": d.get("t_close"),
         "open": d.get("open"),
@@ -191,7 +191,7 @@ class AsyncBarWriter:
         fmt: str = "csv",
         flush_every_secs: float = 2.0,
         flush_every_n: int = 500,
-        session_name: Optional[str] = None,
+        session_name: str | None = None,
     ) -> None:
         self.symbol = symbol.lower()
         self.rule = _sanitize_rule(rule)
@@ -214,20 +214,20 @@ class AsyncBarWriter:
         self.file_path = self.out_dir / f"{self.session_name}.{self._ext()}"
 
         # Estado de hilo/cola
-        self._q: Queue[Dict[str, Any]] = Queue(maxsize=100_000)
+        self._q: Queue[dict[str, Any]] = Queue(maxsize=100_000)
         self._stop = threading.Event()
-        self._thr: Optional[threading.Thread] = None
+        self._thr: threading.Thread | None = None
 
         # Buffers y timers internos (del hilo escritor)
-        self._buffer: List[Dict[str, Any]] = []
+        self._buffer: list[dict[str, Any]] = []
         self._last_flush_ts: float = time.monotonic()
         self._bar_index: int = 0  # contador interno por sesión
-        self._prev_end_ms: Optional[int] = None  # para gap_ms
+        self._prev_end_ms: int | None = None  # para gap_ms
 
         # Recursos de salida tipados
-        self._csv_fp: Optional[IO[str]] = None
-        self._csv_writer: Optional[csv.DictWriter] = None
-        self._parquet_rows: List[Dict[str, Any]] = []
+        self._csv_fp: IO[str] | None = None
+        self._csv_writer: csv.DictWriter | None = None
+        self._parquet_rows: list[dict[str, Any]] = []
 
         logger.info(
             "AsyncBarWriter sesión=%s destino=%s fmt=%s",
@@ -344,7 +344,7 @@ class AsyncBarWriter:
         while not self._stop.is_set():
             try:
                 # Consume en lotes para eficiencia
-                batch: List[Dict[str, Any]] = []
+                batch: list[dict[str, Any]] = []
                 # Espera con timeout para poder comprobar el evento de parada
                 item = self._q.get(timeout=0.2)
                 batch.append(item)
@@ -426,7 +426,7 @@ class AsyncBarWriter:
 
     # --- Implementaciones por formato ---
 
-    def _flush_csv(self, rows: List[Dict[str, Any]]) -> None:
+    def _flush_csv(self, rows: list[dict[str, Any]]) -> None:
         assert self._csv_fp is not None
         # Determina orden de columnas fijo basado en la primera fila del batch
         first = rows[0]
@@ -444,7 +444,7 @@ class AsyncBarWriter:
         self._csv_fp.flush()
         os.fsync(self._csv_fp.fileno())  # mayor durabilidad ante cortes
 
-    def _flush_jsonl(self, rows: List[Dict[str, Any]]) -> None:
+    def _flush_jsonl(self, rows: list[dict[str, Any]]) -> None:
         # Abrimos/close por flush para simplicidad (rendimiento ok a tamaños moderados)
         with open(self.file_path, "a", encoding="utf-8") as fp:
             for r in rows:
@@ -452,7 +452,7 @@ class AsyncBarWriter:
             fp.flush()
             os.fsync(fp.fileno())
 
-    def _flush_parquet(self, rows: List[Dict[str, Any]]) -> None:
+    def _flush_parquet(self, rows: list[dict[str, Any]]) -> None:
         if not _HAVE_PARQUET:
             raise RuntimeError("pyarrow no disponible")
         # Convertimos a tabla y anexamos al archivo (escritura por lotes)
@@ -476,7 +476,7 @@ class AsyncBarWriter:
     def _limit_tag(self) -> str:
         # etiqueta compacta para el nombre de sesión (sin puntos en floats)
         if isinstance(self.limit, float):
-            return ("%g" % self.limit).replace(".", "_")
+            return f"{self.limit:g}".replace(".", "_")
         return str(self.limit)
 
 

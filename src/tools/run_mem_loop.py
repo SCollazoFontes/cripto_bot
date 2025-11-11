@@ -8,6 +8,7 @@ Loop en memoria para validar estabilidad de los builders de micro-velas.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 import logging
 import math
@@ -16,28 +17,32 @@ import signal
 import sys
 import time
 from types import ModuleType, SimpleNamespace
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from typing import Any
 
 # Telemetría y métricas
-from src.core.metrics import BarsPerSecond, BlockTimer, LatencyStats
+from core.metrics import BarsPerSecond, BlockTimer, LatencyStats
 
 # -----------------------------------------------------------------------------
 # Logger del proyecto (opcional). Fallback a logging básico si la import falla.
 # -----------------------------------------------------------------------------
-_init_logger: Optional[Callable[[], None]] = None
+_init_logger: Callable[[], None] | None = None
 try:
-    from src.core.logger_config import init_logger as _init_logger
+    from core.logger_config import init_logger as _init_logger_impl
 except Exception:
-    pass
+    _init_logger_impl = None
+if callable(_init_logger_impl):
+    _init_logger = _init_logger_impl
 
 # -----------------------------------------------------------------------------
 # Registry de builders (opcional; fallback dinámico si no se encuentra)
 # -----------------------------------------------------------------------------
-bars_registry: Optional[ModuleType] = None
+bars_registry: ModuleType | None = None
 try:
-    from src.bars import registry as bars_registry
+    from bars import registry as bars_registry_impl
 except Exception:
-    pass
+    bars_registry_impl = None
+if isinstance(bars_registry_impl, ModuleType):
+    bars_registry = bars_registry_impl
 
 
 # ===========================================================================
@@ -91,7 +96,7 @@ class PoissonTickSource:
         self._price = max(0.0001, self._price + delta)
         return self._price
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """Genera ticks indefinidamente."""
         while True:
             sleep_s = self._interarrival_s()
@@ -112,7 +117,7 @@ class PoissonTickSource:
 # ===========================================================================
 
 
-def _create_builder(name: str, params: Dict[str, Any]) -> Any:
+def _create_builder(name: str, params: dict[str, Any]) -> Any:
     """
     Intenta crear un builder por nombre.
 
@@ -135,9 +140,9 @@ def _create_builder(name: str, params: Dict[str, Any]) -> Any:
     import inspect
 
     try:
-        mod = importlib.import_module(f"src.bars.{name}")
+        mod = importlib.import_module(f"bars.{name}")
     except ModuleNotFoundError as e:  # pragma: no cover
-        raise RuntimeError(f"No se pudo importar src.bars.{name}: {e}") from e
+        raise RuntimeError(f"No se pudo importar bars.{name}: {e}") from e
 
     cands = []
     keys = name.lower().split("_")
@@ -160,7 +165,7 @@ def _create_builder(name: str, params: Dict[str, Any]) -> Any:
 # ===========================================================================
 
 
-def _event_to_builder_args(event: Dict[str, Any]) -> Tuple[object]:
+def _event_to_builder_args(event: dict[str, Any]) -> tuple[object]:
     """
     Adapta un evento sintético a formato compatible con builder.update().
     Añade alias estilo Binance (timestamp ms, quote_qty, is_buyer_maker, ...).
@@ -207,10 +212,10 @@ def _maybe_mark_bar(builder: Any, bar_obj: Any, bps: BarsPerSecond) -> None:
 
     # last_closed_bar
     if hasattr(builder, "last_closed_bar"):
-        bar = getattr(builder, "last_closed_bar")
+        bar = builder.last_closed_bar
         if bar is not None:
             try:
-                setattr(builder, "last_closed_bar", None)
+                builder.last_closed_bar = None
             except Exception:
                 pass
             bps.mark_bar()
@@ -232,9 +237,9 @@ def _maybe_mark_bar(builder: Any, bar_obj: Any, bps: BarsPerSecond) -> None:
 # ===========================================================================
 
 
-def _parse_kv_params(kvs: list[str]) -> Dict[str, Any]:
+def _parse_kv_params(kvs: list[str]) -> dict[str, Any]:
     """Convierte parámetros CLI 'k=v' en diccionario tipado."""
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for item in kvs:
         if "=" not in item:
             raise argparse.ArgumentTypeError(f"--param debe ser k=v (recibido: {item})")
@@ -249,7 +254,7 @@ def _parse_kv_params(kvs: list[str]) -> Dict[str, Any]:
     return out
 
 
-def _normalize_params(builder_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_params(builder_name: str, params: dict[str, Any]) -> dict[str, Any]:
     """Homogeneiza nombres de parámetros según el tipo de builder."""
     name = builder_name.lower()
     p = dict(params)
@@ -282,19 +287,19 @@ def _normalize_params(builder_name: str, params: Dict[str, Any]) -> Dict[str, An
 
 def run(
     builder_name: str,
-    builder_params: Dict[str, Any],
+    builder_params: dict[str, Any],
     rate: float,
     stats_every: float,
-    duration: Optional[float],
+    duration: float | None,
     *,
-    burst_prob: Optional[float] = None,
-    burst_mult: Optional[float] = None,
-    burst_len: Optional[int] = None,
+    burst_prob: float | None = None,
+    burst_mult: float | None = None,
+    burst_len: int | None = None,
     seed: int = 42,
-    price0: Optional[float] = None,
-    vol_pps: Optional[float] = None,
-    qty_min: Optional[float] = None,
-    qty_max: Optional[float] = None,
+    price0: float | None = None,
+    vol_pps: float | None = None,
+    qty_min: float | None = None,
+    qty_max: float | None = None,
 ) -> None:
     """
     Ejecuta un bucle en memoria que alimenta un builder con ticks sintéticos.
@@ -370,8 +375,7 @@ def run(
                 r = bps.snapshot()
                 logger.info(
                     (
-                        "lat(ms) p50=%.3f p95=%.3f max=%.3f | n=%d | "
-                        "barras/s ema=%.2f win=%.2f (win=%ds, n=%d)"
+                        "lat(ms) p50=%.3f p95=%.3f max=%.3f | n=%d | barras/s ema=%.2f win=%.2f (win=%ds, n=%d)"
                     ),
                     s.p50_ms,
                     s.p95_ms,
@@ -393,8 +397,7 @@ def run(
         r = bps.snapshot()
         logger.info(
             (
-                "Fin. lat(ms) p50=%.3f p95=%.3f max=%.3f | n=%d | "
-                "barras/s ema=%.2f win=%.2f (win=%ds, n=%d)"
+                "Fin. lat(ms) p50=%.3f p95=%.3f max=%.3f | n=%d | barras/s ema=%.2f win=%.2f (win=%ds, n=%d)"
             ),
             s.p50_ms,
             s.p95_ms,
@@ -412,7 +415,7 @@ def run(
 # ===========================================================================
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Interfaz de línea de comandos para el loop en memoria."""
     p = argparse.ArgumentParser(description="Loop en memoria para validar builders de micro-velas.")
     p.add_argument("--builder", required=True, help="Nombre del builder (tick_count, volume_qty)")

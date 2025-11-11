@@ -1,77 +1,129 @@
-# ============================================================
-# src/strategies/momentum.py — Momentum simple por lookback
-# ------------------------------------------------------------
-# Lógica:
-#   - Calcula retorno % vs. precio de hace N ticks (lookback_ticks).
-#   - Si no hay posición y retorno >= entry_threshold -> BUY
-#   - Si hay posición y:
-#        retorno <= -exit_threshold  -> SELL (salida)
-#      o (price/avg - 1) >= take_profit_pct -> SELL (TP)
-#      o (price/avg - 1) <= -stop_loss_pct  -> SELL (SL)
-#   - El sizing lo decide el Engine (min_notional y max_position_usd).
-# ============================================================
-
+# src/strategies/momentum.py
 from __future__ import annotations
 
 from collections import deque
-from typing import Optional
+from typing import Any
 
-from src.strategies.base import Signal, Strategy
+from strategies.base import (
+    Strategy,
+    register_strategy,
+)
 
 
+@register_strategy("momentum")
 class MomentumStrategy(Strategy):
+    """
+    Momentum muy ligero sobre la desviación del precio actual respecto a la
+    media simple de los últimos `lookback_ticks`.
+
+    NOTA IMPORTANTE (live/paper):
+    - Esta implementación usa la firma preferida por el engine:
+        on_bar(broker, executor, symbol, bar)
+      y ejecuta órdenes vía `executor`, para que el engine actualice Portfolio
+      y escriba equity/trades con el pipeline existente.
+    """
+
+    name = "momentum"
+
     def __init__(
         self,
-        lookback_ticks: int = 50,
-        entry_threshold: float = 0.001,
-        exit_threshold: float = 0.0005,
-        take_profit_pct: float = 0.004,
-        stop_loss_pct: float = 0.002,
+        lookback_ticks: int = 6,
+        entry_threshold: float = 5e-5,
+        exit_threshold: float = 2e-5,
+        qty_frac: float = 0.10,
+        debug: bool = False,
+        **_: Any,
     ) -> None:
-        assert lookback_ticks >= 1, "lookback_ticks debe ser >= 1"
         self.lookback_ticks = int(lookback_ticks)
         self.entry_threshold = float(entry_threshold)
         self.exit_threshold = float(exit_threshold)
-        self.take_profit_pct = float(take_profit_pct)
-        self.stop_loss_pct = float(stop_loss_pct)
+        self.qty_frac = float(qty_frac)
+        self.debug = bool(debug)
 
-        self._window: deque[float] = deque(maxlen=self.lookback_ticks + 1)
+        self._win: deque[float] = deque(maxlen=self.lookback_ticks)
+        self._in_pos: bool = False  # estado interno simple, opcional
+        self._pos_qty: float = 0.0  # tracking opcional (el portfolio real lo lleva el broker)
 
-    def on_price(
-        self,
-        price: float,
-        ts_ms: Optional[int],
-        position_qty: float,
-        position_avg_price: float,
-    ) -> Signal:
-        # Alimentar ventana
-        self._window.append(price)
-        if len(self._window) <= self.lookback_ticks:
-            return Signal.HOLD  # aún sin suficiente historial
+    # -------------------------- utilidades internas -------------------------
 
-        ref = self._window[0]
-        if ref <= 0.0:
-            return Signal.HOLD
+    def _log(self, msg: str) -> None:
+        if self.debug:
+            print(f"[Momentum] {msg}")
 
-        ret = (price / ref) - 1.0
+    # --------------------------- firma live/paper ----------------------------
 
-        # Sin posición -> buscar entrada
-        if position_qty <= 0.0:
-            if ret >= self.entry_threshold:
-                return Signal.BUY
-            return Signal.HOLD
+    def on_bar_live(self, broker, executor, symbol: str, bar: dict[str, Any]) -> None:
+        """
+        El engine live/paper llama primero a esta firma. Aquí debemos:
+          1) Actualizar ventana y calcular mom.
+          2) Decidir entrada/salida.
+          3) Ejecutar vía executor (NO devolver OrderRequest).
+        """
+        price = float(bar["close"])
+        self._win.append(price)
 
-        # Con posición -> gestionar salida por TP/SL/exit
-        # Señales basadas en precio vs. avg para SL/TP
-        if position_avg_price > 0.0:
-            pos_ret = (price / position_avg_price) - 1.0
-            if pos_ret >= self.take_profit_pct:
-                return Signal.SELL  # take profit
-            if pos_ret <= -self.stop_loss_pct:
-                return Signal.SELL  # stop loss
+        if len(self._win) < self.lookback_ticks:
+            self._log(f"warmup {len(self._win)}/{self.lookback_ticks}, price={price:.2f}")
+            return
 
-        # Salida por reversión del momentum
-        if ret <= -self.exit_threshold:
-            return Signal.SELL
+        mean = sum(self._win) / len(self._win)
+        if mean <= 0.0:
+            return
 
-        return Signal.HOLD
+        mom = (price - mean) / mean
+
+        # Estado real: usamos broker para cash/posición actual
+        try:
+            cash: float = float(broker.cash)
+        except Exception:
+            # fallback razonable si el broker no expone 'cash'
+            cash = float(getattr(self, "_available_usdt", 10_000.0))
+
+        try:
+            current_qty: float = float(broker.position_qty)
+        except Exception:
+            current_qty = self._pos_qty  # fallback a nuestro tracking
+
+        # Logs de diagnóstico
+        self._log(
+            f"price={price:.2f} mean={mean:.2f} mom={mom:+.6f} "
+            f"in_pos={self._in_pos} broker_qty={current_qty:.6f} cash={cash:.2f}"
+        )
+
+        # ------------------------- Reglas de trading -------------------------
+
+        # Entrada: no en posición y momentum por encima del umbral
+        if (not self._in_pos) and (mom > self.entry_threshold):
+            notional = max(0.0, cash * self.qty_frac)
+            qty = 0.0 if price <= 0.0 else (notional / price)
+            if qty > 0.0:
+                self._log(f"ENTRY {symbol} qty={qty:.6f} notional≈{notional:.2f}")
+                executor.market_buy(symbol, qty)
+                self._in_pos = True
+                self._pos_qty = qty  # tracking opcional
+
+            return  # importante: no seguimos evaluando salida en el mismo tick
+
+        # Salida: en posición y momentum por debajo del umbral (en negativo)
+        if self._in_pos and (mom < -self.exit_threshold):
+            qty_to_close = current_qty if current_qty > 0.0 else self._pos_qty
+            if qty_to_close > 0.0:
+                self._log(f"EXIT {symbol} qty={qty_to_close:.6f}")
+                executor.market_sell(symbol, qty_to_close)
+            self._in_pos = False
+            self._pos_qty = 0.0
+            return
+
+        # Si no hay acción, terminamos silenciosamente
+        return
+
+    # ------------------- firma opcional para backtests simples ---------------
+
+    def on_bar_bar(self, bar: dict[str, Any]) -> None:
+        """
+        Para backtests antiguos que esperan on_bar(bar) devolviendo OrderRequest.
+        Aquí no devolvemos nada para forzar el uso del pipeline live/paper.
+        (Puedes implementar la misma lógica y devolver un OrderRequest si te
+        resulta útil en otro runner).
+        """
+        return None

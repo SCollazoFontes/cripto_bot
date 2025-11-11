@@ -17,7 +17,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
 
 __all__ = ["Trade", "Bar", "BarBuilder"]
 
@@ -90,7 +89,7 @@ class Bar:
     start_time: datetime
     end_time: datetime
     trade_count: int
-    dollar_value: Optional[float] = None
+    dollar_value: float | None = None
 
 
 # ============================================================
@@ -112,7 +111,7 @@ class BarBuilder(ABC):
     """
 
     @abstractmethod
-    def update(self, trade: Trade) -> Optional[Bar]:
+    def update(self, trade: Trade) -> Bar | None:
         """
         Actualiza el estado con un trade. Si se cumple la regla de cierre,
         devuelve la nueva Bar.
@@ -135,7 +134,7 @@ class BarBuilder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_current_trades(self) -> List[Trade]:
+    def get_current_trades(self) -> list[Trade]:
         """
         Devuelve la lista de trades acumulados de la barra activa.
 

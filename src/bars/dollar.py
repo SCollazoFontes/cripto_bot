@@ -26,7 +26,6 @@ Uso típico
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from .base import Bar, BarBuilder, Trade
 
@@ -52,7 +51,7 @@ class DollarBarBuilder(BarBuilder):
     """
 
     value_limit: float
-    _buffer: List[Trade] = field(default_factory=list, init=False, repr=False)
+    _buffer: list[Trade] = field(default_factory=list, init=False, repr=False)
     _value_sum: float = field(default=0.0, init=False, repr=False)
 
     # ---------------------------------------------------------------------
@@ -67,7 +66,7 @@ class DollarBarBuilder(BarBuilder):
     # ---------------------------------------------------------------------
     # API pública (BarBuilder)
     # ---------------------------------------------------------------------
-    def update(self, trade: Trade) -> Optional[Bar]:
+    def update(self, trade: Trade) -> Bar | None:
         """
         Incorpora un trade. Si ∑ (price * qty) >= value_limit, cierra la barra.
         """
@@ -86,7 +85,7 @@ class DollarBarBuilder(BarBuilder):
         self._buffer.clear()
         self._value_sum = 0.0
 
-    def get_current_trades(self) -> List[Trade]:
+    def get_current_trades(self) -> list[Trade]:
         """Devuelve una copia del buffer para evitar mutaciones externas."""
         return list(self._buffer)
 
@@ -94,7 +93,7 @@ class DollarBarBuilder(BarBuilder):
     # Helpers internos
     # ---------------------------------------------------------------------
     @staticmethod
-    def _build_bar(trades: List[Trade]) -> Bar:
+    def _build_bar(trades: list[Trade]) -> Bar:
         """Construye la microvela OHLCV a partir de la lista de trades."""
         if not trades:
             raise ValueError("No hay trades para construir la barra.")

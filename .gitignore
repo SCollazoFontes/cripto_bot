@@ -1,11 +1,49 @@
-# entornos y dependencias
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
 
-# secretos y archivos locales
-.env
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# datos y logs
-data/
-logs/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Linting/Type checking
+.mypy_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Project specific
+data/bars_live/*.csv
+data/logs/
+data/test_write/
+reports/diag/*.csv
+reports/paper_runs/*/
+reports/runs_from_bars_v2/*/
+runs/*/
+!runs/quick_check/
+*.log
+
+# Environment
+.env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.bak
+*~

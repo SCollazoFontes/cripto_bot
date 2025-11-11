@@ -28,7 +28,6 @@ Uso típico
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from .base import Bar, BarBuilder, Trade
 
@@ -54,7 +53,7 @@ class VolumeQtyBarBuilder(BarBuilder):
     """
 
     qty_limit: float
-    _buffer: List[Trade] = field(default_factory=list, init=False, repr=False)
+    _buffer: list[Trade] = field(default_factory=list, init=False, repr=False)
     _qty_sum: float = field(default=0.0, init=False, repr=False)
 
     # ---------------------------------------------------------------------
@@ -69,7 +68,7 @@ class VolumeQtyBarBuilder(BarBuilder):
     # ---------------------------------------------------------------------
     # API pública (BarBuilder)
     # ---------------------------------------------------------------------
-    def update(self, trade: Trade) -> Optional[Bar]:
+    def update(self, trade: Trade) -> Bar | None:
         """
         Incorpora un trade. Si ∑ qty >= qty_limit, cierra y devuelve la barra.
 
@@ -93,7 +92,7 @@ class VolumeQtyBarBuilder(BarBuilder):
         self._buffer.clear()
         self._qty_sum = 0.0
 
-    def get_current_trades(self) -> List[Trade]:
+    def get_current_trades(self) -> list[Trade]:
         """Devuelve una copia del buffer para evitar mutaciones externas."""
         return list(self._buffer)
 
@@ -101,7 +100,7 @@ class VolumeQtyBarBuilder(BarBuilder):
     # Helpers internos
     # ---------------------------------------------------------------------
     @staticmethod
-    def _build_bar(trades: List[Trade]) -> Bar:
+    def _build_bar(trades: list[Trade]) -> Bar:
         """Construye la microvela OHLCV a partir de la lista de trades."""
         if not trades:
             raise ValueError("No hay trades para construir la barra.")

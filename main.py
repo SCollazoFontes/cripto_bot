@@ -25,7 +25,7 @@ from dotenv import load_dotenv  # noqa: E402 (import tardío por orden lógico)
 load_dotenv()
 
 # --- 3) IMPORTAR Y EJECUTAR EL ENGINE -------------------------
-from core.engine import Engine  # ya funciona el import corto gracias al paso 1
+from core.engine import Engine  # type: ignore[attr-defined]
 
 if __name__ == "__main__":
     engine = Engine()

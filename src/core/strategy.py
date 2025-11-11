@@ -28,7 +28,7 @@ Notas
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 
 class Strategy(ABC):
@@ -39,7 +39,7 @@ class Strategy(ABC):
     y `on_end` son opcionales y sirven para inicialización/flush.
     """
 
-    def __init__(self, name: Optional[str] = None) -> None:
+    def __init__(self, name: str | None = None) -> None:
         self._name = name or self.__class__.__name__
 
     @property

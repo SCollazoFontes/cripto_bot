@@ -32,9 +32,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, MutableMapping
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, MutableMapping, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 import yaml
@@ -46,7 +47,7 @@ DEFAULT_CONFIG_PATH = Path("src/config/config.yaml")
 
 # Cache global para evitar relecturas constantes.
 # Se invalida llamando a reload_config().
-_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+_CONFIG_CACHE: dict[str, Any] | None = None
 
 
 # ------------------------------------------------------------
@@ -94,7 +95,7 @@ def _deep_set(d: MutableMapping[str, Any], keys: Iterable[str], value: Any) -> N
 # ------------------------------------------------------------
 # Carga YAML + overrides desde .env
 # ------------------------------------------------------------
-def _load_yaml_config(path: Path) -> Dict[str, Any]:
+def _load_yaml_config(path: Path) -> dict[str, Any]:
     _ensure_file_exists(path)
     with path.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
@@ -103,7 +104,7 @@ def _load_yaml_config(path: Path) -> Dict[str, Any]:
     return data
 
 
-def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
+def _apply_env_overrides(cfg: dict[str, Any]) -> None:
     """
     Aplica overrides de variables de entorno (.env) sobre el dict `cfg`.
     Mantén este mapeo corto y explícito para evitar sorpresas.
@@ -112,7 +113,7 @@ def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
     load_dotenv(override=False)
 
     # Mapeo: ENV_VAR -> (ruta en config.yaml)
-    ENV_TO_CFG: Dict[str, tuple[str, str]] = {
+    ENV_TO_CFG: dict[str, tuple[str, str]] = {
         # Entorno / logging
         "USE_TESTNET": ("environment", "use_testnet"),
         "MODE": ("environment", "mode"),
@@ -159,7 +160,7 @@ def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
 # ------------------------------------------------------------
 # Validación mínima del esquema (imprescindibles)
 # ------------------------------------------------------------
-def _validate_schema(cfg: Dict[str, Any]) -> None:
+def _validate_schema(cfg: dict[str, Any]) -> None:
     """
     Valida que existan las secciones y claves mínimas.
     Lanza ValueError si falta algo crítico.
@@ -176,7 +177,7 @@ def _validate_schema(cfg: Dict[str, Any]) -> None:
         ("data", "source"),
     ]
 
-    missing: List[str] = []
+    missing: list[str] = []
     for path_keys in required_paths:
         node: Any = cfg
         ok = True
@@ -197,7 +198,7 @@ def _validate_schema(cfg: Dict[str, Any]) -> None:
 # ------------------------------------------------------------
 # API pública
 # ------------------------------------------------------------
-def get_config(path: Optional[Path | str] = None, use_cache: bool = True) -> Dict[str, Any]:
+def get_config(path: Path | str | None = None, use_cache: bool = True) -> dict[str, Any]:
     """
     Devuelve la configuración del bot como diccionario.
     - path: ruta alternativa al YAML (opcional).
@@ -220,7 +221,7 @@ def get_config(path: Optional[Path | str] = None, use_cache: bool = True) -> Dic
     return cfg
 
 
-def reload_config(path: Optional[Path | str] = None) -> Dict[str, Any]:
+def reload_config(path: Path | str | None = None) -> dict[str, Any]:
     """
     Fuerza la recarga del YAML y re-aplica overrides del .env.
     Útil si cambias parámetros en caliente (p.ej., durante I+D).
@@ -233,7 +234,7 @@ def reload_config(path: Optional[Path | str] = None) -> Dict[str, Any]:
 # ------------------------------------------------------------
 # Helpers opcionales de lectura (azúcar sintáctico)
 # ------------------------------------------------------------
-def get_nested(cfg: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+def get_nested(cfg: dict[str, Any], *keys: str, default: Any = None) -> Any:
     """
     Acceso seguro a valores anidados: get_nested(cfg, "trading", "symbol")
     Devuelve `default` si no existe la ruta.

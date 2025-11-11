@@ -23,7 +23,7 @@ if str(SRC_PATH) not in sys.path:
 from loguru import logger  # noqa: E402
 
 from core.config_loader import get_config  # noqa: E402
-from core.engine import Engine  # noqa: E402
+from core.engine import Engine  # type: ignore[attr-defined]  # noqa: E402
 from core.logger_config import init_logger  # noqa: E402
 
 

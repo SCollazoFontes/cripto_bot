@@ -1,0 +1,17 @@
+{
+  "n_bars": 100,
+  "start_equity": 10000.0,
+  "end_equity": 9970.990259058612,
+  "total_return": -0.002900974094138837,
+  "max_drawdown": 0.0029902587358379604,
+  "sharpe": -79.60391314258612,
+  "cagr": -0.9999997997938431,
+  "peak_index": 0,
+  "trough_index": 69,
+  "trades": {
+    "n_trades": 5.0,
+    "winrate": 0.0,
+    "profit_factor": 0.0,
+    "avg_trade": -5.301898188277846
+  }
+}

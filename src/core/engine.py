@@ -1,248 +1,202 @@
-# ============================================================
-# src/core/engine.py — Motor principal (v0.3.1)
-# ------------------------------------------------------------
-# Cambios vs v0.3:
-#   - Resolver E501 (líneas >100) dividiendo logs/llamadas.
-#   - Guardas adicionales para mypy con Optionals.
-# ============================================================
+# src/core/engine.py
+"""
+Engine "live-like" con soporte de:
+- Barras externas (external_bars) -> consumo determinista (offline o micro-velas ya fabricadas)
+- Generación de micro-velas en vivo a partir de un price_provider (bid/ask/ts)
+- Reporting de equity (equity.csv) opcional y determinista
+
+Interfaz principal:
+    run_engine_live_like(
+        strategy,
+        symbol,
+        broker,
+        executor=None,
+        *,
+        # Opción A: pasar barras ya construidas
+        external_bars: list[dict] | None = None,
+        # Opción B: crear micro-velas en vivo a partir de un price_provider
+        price_provider=None,      # callable (symbol) -> (bid, ask, ts)
+        interval_sec: float = 1.0,
+        ticks: int | None = None, # nº de barras a emitir en modo live
+        report_dir: str | None = None,
+        write_reports: bool = True,
+    ) -> dict
+
+Notas:
+- Las barras externas deben ser dicts con llaves: ts, open, high, low, close (floats).
+- El equity se marca a `close` de cada barra.
+- No asumo estructura del executor: solo se lo pasamos a strategy.on_bar(...).
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from time import sleep
+from collections.abc import Callable, Iterable
+import csv
+import os
+import time
+from typing import Any
 
-from loguru import logger
-
-from src.core.broker import OrderRequest, Side
-from src.core.broker_sim import SimBroker
-from src.core.config_loader import get_config
-from src.core.logger_config import init_logger
-from src.strategies.base import Strategy
-from src.strategies.momentum import MomentumStrategy
+# --------------------------------- Helpers ---------------------------------
 
 
-# -----------------------------
-# Feed de precios mínimo (toy)
-# -----------------------------
-@dataclass
-class MiniPriceFeed:
-    price: float
-    up_tick: float = 10.0
-    down_tick: float = 5.0
-    step: int = 0
+def _ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
 
-    def next_price(self) -> float:
-        self.step += 1
-        if self.step % 3 == 0:
-            self.price = max(0.01, self.price - self.down_tick)
+
+def _write_equity_csv(path: str, rows: list[dict[str, Any]]) -> None:
+    _ensure_dir(os.path.dirname(path))
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=["ts", "symbol", "close", "pos_qty", "cash_usdt", "equity_usdt"],
+        )
+        w.writeheader()
+        w.writerows(rows)
+
+
+def _mark_to_equity_row(broker, symbol: str, ts: float, close: float) -> dict[str, Any]:
+    pos = broker.get_position(symbol)
+    cash = broker.get_account()["balances"].get("USDT", {}).get("free", 0.0)
+    return {
+        "ts": float(ts),
+        "symbol": symbol,
+        "close": float(close),
+        "pos_qty": float(pos),
+        "cash_usdt": float(cash),
+        "equity_usdt": float(cash + pos * close),
+    }
+
+
+# --------------------------------- Engine ----------------------------------
+
+
+def _call_on_bar(strategy, broker, executor, symbol: str, bar: dict[str, Any]) -> None:
+    """
+    Llama a Strategy.on_bar, que internamente decide on_bar_live/on_bar_backtest.
+    Se mantiene este wrapper por compatibilidad con tu código previo.
+    """
+    strategy.on_bar(broker, executor, symbol, bar)
+
+
+def _iter_external_bars(bars: Iterable[dict[str, Any]]) -> Iterable[dict[str, Any]]:
+    """
+    Normaliza/valida mínimamente las barras externas.
+    """
+    for b in bars:
+        for k in ("ts", "open", "high", "low", "close"):
+            if k not in b:
+                raise ValueError(f"Bar externa sin clave '{k}': {b}")
+        yield {
+            "ts": float(b["ts"]),
+            "open": float(b["open"]),
+            "high": float(b["high"]),
+            "low": float(b["low"]),
+            "close": float(b["close"]),
+        }
+
+
+def _iter_live_microbars(
+    symbol: str,
+    price_provider: Callable[[str], tuple[float, float, float]],
+    interval_sec: float,
+    ticks: int | None,
+) -> Iterable[dict[str, Any]]:
+    """
+    Fabrica micro-velas en vivo agrupando mids por intervalos de `interval_sec`.
+    - price_provider(symbol) -> (bid, ask, ts)
+    - Emite una barra por "bucket" de tiempo.
+    """
+    if interval_sec <= 0:
+        interval_sec = 1.0
+
+    emitted = 0
+    win_prices: list[float] = []
+    last_bucket: int | None = None
+
+    while True:
+        bid, ask, ts = price_provider(symbol)
+        mid = (bid + ask) / 2.0
+        bucket = int(ts // interval_sec)
+
+        if last_bucket is None:
+            last_bucket = bucket
+
+        if bucket == last_bucket:
+            win_prices.append(mid)
         else:
-            self.price = self.price + self.up_tick
-        return self.price
+            if win_prices:
+                bar = {
+                    "ts": float(last_bucket * interval_sec),
+                    "open": float(win_prices[0]),
+                    "high": float(max(win_prices)),
+                    "low": float(min(win_prices)),
+                    "close": float(win_prices[-1]),
+                }
+                yield bar
+                emitted += 1
+                if ticks is not None and emitted >= ticks:
+                    return
+            win_prices = [mid]
+            last_bucket = bucket
+
+        # pausamos ligeramente para no saturar la API
+        time.sleep(0.05)
 
 
-class Engine:
-    def __init__(self) -> None:
-        # 1) Logger
-        init_logger()
+def run_engine_live_like(
+    strategy,
+    symbol: str,
+    broker,
+    executor=None,
+    *,
+    external_bars: Iterable[dict[str, Any]] | None = None,
+    price_provider: Callable[[str], tuple[float, float, float]] | None = None,
+    interval_sec: float = 1.0,
+    ticks: int | None = None,
+    report_dir: str | None = None,
+    write_reports: bool = True,
+) -> dict[str, Any]:
+    """
+    Ejecuta la estrategia contra:
+      - A) barras externas (external_bars), o
+      - B) micro-velas en vivo vía price_provider y interval_sec.
 
-        # 2) Config
-        cfg = get_config()
+    Devuelve un dict con metadatos y, si procede, la ruta de equity.csv
+    """
+    if external_bars is None and price_provider is None:
+        raise ValueError("Debes pasar external_bars o price_provider.")
 
-        env_cfg = cfg.get("environment", {})
-        trd_cfg = cfg.get("trading", {})
-        strat_cfg = cfg.get("strategy", {})
+    # Selección del iterador de barras
+    if external_bars is not None:
+        bar_iter = _iter_external_bars(external_bars)
+    else:
+        # modo en vivo
+        assert price_provider is not None
+        bar_iter = _iter_live_microbars(symbol, price_provider, interval_sec, ticks)
 
-        self.use_testnet: bool = bool(env_cfg.get("use_testnet", True))
-        self.symbol: str = str(trd_cfg.get("symbol", "BTCUSDT"))
-        self.cycle_delay: float = float(trd_cfg.get("cycle_delay", 1.0))
+    equity_rows: list[dict[str, Any]] = []
+    n = 0
 
-        # parámetros de sizing y costes
-        self.min_notional: float = float(trd_cfg.get("min_notional", 5.0))
-        self.max_position_usd: float = float(trd_cfg.get("max_position_usd", 200.0))
-        fees_bps: float = float(trd_cfg.get("trade_fee_bps", 2.0))
-        slip_bps: float = float(trd_cfg.get("slippage_bps", 5.0))
+    for bar in bar_iter:
+        _call_on_bar(strategy, broker, executor, symbol, bar)
+        # mark-to-close para equity
+        equity_rows.append(_mark_to_equity_row(broker, symbol, ts=bar["ts"], close=bar["close"]))
+        # refresco broker por si hay LIMIT GTC abiertos; inofensivo si no los hay
+        if hasattr(broker, "refresh"):
+            try:
+                broker.refresh()
+            except Exception:
+                pass
+        n += 1
 
-        # parámetros utilitarios
-        self.max_cycles: int = int(trd_cfg.get("max_cycles", 12))
-        price0 = float(trd_cfg.get("price0", 60_000.0))
+    # Reporting
+    equity_path = None
+    if write_reports and report_dir:
+        equity_path = os.path.join(report_dir, "equity.csv")
+        _write_equity_csv(equity_path, equity_rows)
 
-        logger.info("Inicializando motor de trading...")
-        logger.debug(f"Modo testnet: {self.use_testnet}")
-
-        logger.debug(
-            "Params trading: min_notional=%s, max_position_usd=%s, fee_bps=%s, slip_bps=%s",
-            self.min_notional,
-            self.max_position_usd,
-            fees_bps,
-            slip_bps,
-        )
-
-        # 3) Broker simulado (usa fees/slippage de trading.*)
-        self.broker = SimBroker(
-            starting_cash=float(trd_cfg.get("starting_cash", 10_000.0)),
-            fees_bps=fees_bps,
-            slip_bps=slip_bps,
-            allow_short=bool(trd_cfg.get("allow_short", False)),
-        )
-
-        # 4) Feed de precios toy
-        self.feed = MiniPriceFeed(price=price0)
-
-        # 5) Estrategia desde config
-        self.strategy = self._build_strategy(strat_cfg)
-
-        self.is_running: bool = False
-        logger.debug("Engine listo (SimBroker + MiniPriceFeed + Strategy).")
-
-    # -----------------------------
-    # Construcción de la estrategia
-    # -----------------------------
-    def _build_strategy(self, strat_cfg: dict) -> Strategy:
-        name = str(strat_cfg.get("name", "momentum")).lower()
-        if name == "momentum":
-            return MomentumStrategy(
-                lookback_ticks=int(strat_cfg.get("lookback_ticks", 50)),
-                entry_threshold=float(strat_cfg.get("entry_threshold", 0.001)),
-                exit_threshold=float(strat_cfg.get("exit_threshold", 0.0005)),
-                stop_loss_pct=float(strat_cfg.get("stop_loss_pct", 0.002)),
-                take_profit_pct=float(strat_cfg.get("take_profit_pct", 0.004)),
-            )
-        raise ValueError(f"Estrategia no soportada: {name}")
-
-    # -----------------------------
-    # Helpers de sizing / límites
-    # -----------------------------
-    def _calc_min_qty(self, price: float) -> float:
-        qty = self.min_notional / max(price, 1e-9)
-        return max(qty, 0.0)
-
-    def _can_add_position(self, price: float, add_qty: float) -> bool:
-        views = self.broker.positions()
-        pos_view = views.get(self.symbol)
-        current_qty = pos_view.qty if pos_view is not None else 0.0
-        future_usd = (current_qty + add_qty) * price
-        return future_usd <= self.max_position_usd + 1e-9
-
-    # -----------------------------
-    # Bucle principal
-    # -----------------------------
-    def run(self) -> None:
-        logger.info("Ejecutando ciclo principal...")
-        self.is_running = True
-        cycle = 0
-
-        try:
-            while self.is_running:
-                cycle += 1
-                price_ref = self.feed.next_price()
-
-                # Estado actual
-                pos_view = self.broker.positions().get(self.symbol)
-                pos_qty = pos_view.qty if pos_view is not None else 0.0
-                pos_avg = pos_view.avg_price if pos_view is not None else 0.0
-
-                # Señal de la estrategia
-                sig = self.strategy.on_price(price_ref, None, pos_qty, pos_avg)
-
-                # Cálculo de qty mínima por notional y control de límites
-                min_qty = self._calc_min_qty(price_ref)
-
-                if sig.name == "BUY":
-                    if min_qty > 0.0 and self._can_add_position(price_ref, min_qty):
-                        rep = self.broker.submit_market(
-                            OrderRequest(
-                                symbol=self.symbol,
-                                side=Side.BUY,
-                                qty=min_qty,
-                                price_ref=price_ref,
-                            )
-                        )
-                        logger.info(
-                            "EXEC BUY %.6f %s @ %.2f (fee=%.6f)",
-                            rep.qty,
-                            rep.symbol,
-                            rep.exec_price,
-                            rep.fee,
-                        )
-                    else:
-                        logger.debug("BUY bloqueado por límites (min_notional o max_position_usd).")
-
-                elif sig.name == "SELL":
-                    sell_qty = min(min_qty, pos_qty)
-                    if sell_qty > 0.0:
-                        rep = self.broker.submit_market(
-                            OrderRequest(
-                                symbol=self.symbol,
-                                side=Side.SELL,
-                                qty=sell_qty,
-                                price_ref=price_ref,
-                            )
-                        )
-                        logger.info(
-                            "EXEC SELL %.6f %s @ %.2f (fee=%.6f)",
-                            rep.qty,
-                            rep.symbol,
-                            rep.exec_price,
-                            rep.fee,
-                        )
-                    else:
-                        logger.debug("SELL ignorado: no hay posición suficiente para reducir.")
-
-                else:
-                    logger.debug("HOLD")
-
-                # MTM y logs de estado
-                equity = self.broker.equity(marks={self.symbol: price_ref})
-                pos_view = self.broker.positions().get(self.symbol)
-
-                if pos_view is not None:
-                    logger.debug(
-                        "[ciclo %d] price=%.2f cash=%.2f equity=%.2f pos "
-                        "qty=%.6f avg=%.2f realized=%.2f fees=%.4f",
-                        cycle,
-                        price_ref,
-                        self.broker.cash(),
-                        equity,
-                        pos_view.qty,
-                        pos_view.avg_price,
-                        pos_view.realized_pnl,
-                        pos_view.fees_paid,
-                    )
-                else:
-                    logger.debug(
-                        "[ciclo %d] price=%.2f cash=%.2f equity=%.2f pos (sin posición)",
-                        cycle,
-                        price_ref,
-                        self.broker.cash(),
-                        equity,
-                    )
-
-                if cycle >= self.max_cycles:
-                    logger.info(
-                        "Simulación terminada (%d ciclos completados).",
-                        self.max_cycles,
-                    )
-                    self.is_running = False
-
-                sleep(self.cycle_delay)
-
-        except KeyboardInterrupt:
-            logger.warning("Ejecución interrumpida manualmente (Ctrl+C).")
-            self.is_running = False
-        except Exception as e:
-            logger.exception(f"Error en el motor: {e}")
-            self.is_running = False
-        finally:
-            final_mark = self.feed.price
-            equity_final = self.broker.equity(marks={self.symbol: final_mark})
-            logger.info(
-                "Motor detenido. Equity final (mark @ %.2f): %.2f",
-                final_mark,
-                equity_final,
-            )
-            self.broker.shutdown()
-
-
-if __name__ == "__main__":
-    engine = Engine()
-    engine.run()
+    return {
+        "n_bars": n,
+        "symbol": symbol,
+        "equity_csv": equity_path,
+    }

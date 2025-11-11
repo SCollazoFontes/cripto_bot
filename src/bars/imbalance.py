@@ -18,7 +18,7 @@ Convención de `is_buyer_maker` (Binance):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Literal, Optional
+from typing import Literal
 
 from .base import Bar, BarBuilder, Trade
 
@@ -40,7 +40,7 @@ class ImbalanceBarBuilder(BarBuilder):
 
     imbal_limit: float
     mode: Literal["qty", "tick"] = "qty"
-    _buffer: List[Trade] = field(default_factory=list, init=False, repr=False)
+    _buffer: list[Trade] = field(default_factory=list, init=False, repr=False)
     _imbalance: float = field(default=0.0, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -49,7 +49,7 @@ class ImbalanceBarBuilder(BarBuilder):
         if self.mode not in ("qty", "tick"):
             raise ValueError('mode debe ser "qty" o "tick".')
 
-    def update(self, trade: Trade) -> Optional[Bar]:
+    def update(self, trade: Trade) -> Bar | None:
         """Incorpora un trade y cierra si |desequilibrio| >= imbal_limit."""
         self._buffer.append(trade)
 
@@ -69,12 +69,12 @@ class ImbalanceBarBuilder(BarBuilder):
         self._buffer.clear()
         self._imbalance = 0.0
 
-    def get_current_trades(self) -> List[Trade]:
+    def get_current_trades(self) -> list[Trade]:
         """Devuelve copia del buffer actual."""
         return list(self._buffer)
 
     @staticmethod
-    def _build_bar(trades: List[Trade]) -> Bar:
+    def _build_bar(trades: list[Trade]) -> Bar:
         """Construye microvela OHLCV con tiempos y recuento."""
         if not trades:
             raise ValueError("No hay trades para construir la barra.")

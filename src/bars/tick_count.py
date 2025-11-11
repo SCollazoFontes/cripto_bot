@@ -36,7 +36,6 @@ Notas de implementación
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from .base import Bar, BarBuilder, Trade
 
@@ -62,7 +61,7 @@ class TickCountBarBuilder(BarBuilder):
     """
 
     tick_limit: int
-    _buffer: List[Trade] = field(default_factory=list, init=False, repr=False)
+    _buffer: list[Trade] = field(default_factory=list, init=False, repr=False)
     _count: int = field(default=0, init=False, repr=False)
 
     # -------------------------------------------------------------------------
@@ -77,7 +76,7 @@ class TickCountBarBuilder(BarBuilder):
     # -------------------------------------------------------------------------
     # API pública (BarBuilder)
     # -------------------------------------------------------------------------
-    def update(self, trade: Trade) -> Optional[Bar]:
+    def update(self, trade: Trade) -> Bar | None:
         """
         Incorpora un trade y, si se alcanzó el límite, cierra y devuelve la barra.
 
@@ -114,7 +113,7 @@ class TickCountBarBuilder(BarBuilder):
         self._buffer.clear()
         self._count = 0
 
-    def get_current_trades(self) -> List[Trade]:
+    def get_current_trades(self) -> list[Trade]:
         """
         Devuelve una **copia** del buffer actual por seguridad (evita mutaciones externas).
 
@@ -129,7 +128,7 @@ class TickCountBarBuilder(BarBuilder):
     # Helpers internos
     # -------------------------------------------------------------------------
     @staticmethod
-    def _build_bar(trades: List[Trade]) -> Bar:
+    def _build_bar(trades: list[Trade]) -> Bar:
         """
         Construye la microvela OHLCV a partir de los trades acumulados.
 

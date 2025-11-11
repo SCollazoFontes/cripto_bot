@@ -20,12 +20,11 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 import time
-from typing import Deque, List, Optional
 
 # ------------------------------ Utilidades -----------------------------------
 
 
-def _percentile(sorted_values: List[float], q: float) -> float:
+def _percentile(sorted_values: list[float], q: float) -> float:
     """
     Percentil simple (q en [0,1]) sobre una lista YA ORDENADA.
     Interpolación lineal entre posiciones.
@@ -49,11 +48,11 @@ class EWMA:
     alpha en (0,1]; cuanto mayor, más reactiva.
     """
 
-    def __init__(self, alpha: float, initial: Optional[float] = None) -> None:
+    def __init__(self, alpha: float, initial: float | None = None) -> None:
         if not (0 < alpha <= 1):
             raise ValueError("alpha debe estar en (0, 1].")
         self.alpha = alpha
-        self.value: Optional[float] = initial
+        self.value: float | None = initial
 
     def update(self, x: float) -> float:
         if self.value is None:
@@ -96,7 +95,7 @@ class LatencyStats:
     def __init__(self, maxlen: int = 5000) -> None:
         if maxlen < 100:
             raise ValueError("maxlen demasiado pequeño (mín 100).")
-        self._buf: Deque[float] = deque(maxlen=maxlen)
+        self._buf: deque[float] = deque(maxlen=maxlen)
         self._count_total = 0
         self._max_seen = 0.0
 
@@ -158,9 +157,9 @@ class BarsPerSecond:
         if window_s <= 0:
             raise ValueError("window_s debe ser > 0.")
         self.window_s = float(window_s)
-        self._ts: Deque[float] = deque()
+        self._ts: deque[float] = deque()
         self._ema = EWMA(alpha=ema_alpha, initial=0.0)
-        self._last_mark_ts: Optional[float] = None
+        self._last_mark_ts: float | None = None
 
     def _now(self) -> float:
         return time.perf_counter()
@@ -222,17 +221,17 @@ class BlockTimer:
 
     def __init__(self, sink: LatencyStats) -> None:
         self._sink = sink
-        self._t0: Optional[float] = None
+        self._t0: float | None = None
 
-    def __enter__(self) -> "BlockTimer":
+    def __enter__(self) -> BlockTimer:
         self.start()
         return self
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc: Optional[BaseException],
-        tb: Optional[object],
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
     ) -> None:
         """Cierra el cronómetro al salir del bloque `with`."""
         self.stop()

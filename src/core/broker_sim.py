@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from core.broker import Broker
+from core.costs import CostModel
 from core.portfolio import Portfolio, PortfolioConfig
 
 logger = logging.getLogger(__name__)
@@ -22,9 +23,10 @@ class SimBrokerConfig:
     """Parámetros de configuración para el broker simulado."""
 
     starting_cash: float = 10_000.0
-    fees_bps: float = 2.5
-    slip_bps: float = 1.0
+    fees_bps: float = 2.5  # usado si no se pasa CostModel
+    slip_bps: float = 1.0  # usado si no se pasa CostModel
     allow_short: bool = False
+    cost_model: CostModel | None = None
 
 
 class SimBroker(Broker):
@@ -44,6 +46,7 @@ class SimBroker(Broker):
             )
         )
         self._last_price: float | None = None
+        self._cost_model: CostModel | None = cfg.cost_model
 
     def submit_order(
         self,
@@ -70,11 +73,8 @@ class SimBroker(Broker):
             )
             return None
 
-        slip = self.cfg.slip_bps / 10_000
-        exec_price = price * (1 + slip) if side == "BUY" else price * (1 - slip)
-        exec_price = float(exec_price)
-
-        fee = self.cfg.fees_bps / 10_000 * exec_price * qty
+        exec_price = self._effective_price(price, side)
+        fee = self._fee_amount(exec_price, qty, side)
 
         self._portfolio.update_from_trade(side=side, qty=qty, price=exec_price, fee=fee)
         self._last_price = exec_price
@@ -86,6 +86,7 @@ class SimBroker(Broker):
             "exec_price": exec_price,
             "fee": fee,
             "reason": reason,
+            "meta": meta or {},
         }
 
     def equity(self, mark_price: float | None = None) -> float:
@@ -110,3 +111,32 @@ class SimBroker(Broker):
     def allow_short(self) -> bool:
         """Indica si se permite abrir posiciones cortas."""
         return self.cfg.allow_short
+
+    # ------------------ CostModel helpers ------------------
+    def _effective_price(self, base_price: float, side: str) -> float:
+        cm = self._cost_model
+        if cm is None:
+            slip = self.cfg.slip_bps / 10_000
+            return (base_price * (1 + slip)) if side.upper() == "BUY" else (base_price * (1 - slip))
+        role: Literal["maker", "taker"] = "taker"  # SimBroker ejecuta mercado instantáneo
+        side_norm = "buy" if side.upper() == "BUY" else "sell"
+        try:
+            return float(cm.effective_price(base_price=base_price, side=side_norm, role=role))
+        except Exception:
+            slip = self.cfg.slip_bps / 10_000
+            return (base_price * (1 + slip)) if side.upper() == "BUY" else (base_price * (1 - slip))
+
+    def _fee_amount(self, price: float, qty: float, side: str) -> float:
+        notional = abs(price * qty)
+        cm = self._cost_model
+        if cm is None:
+            return notional * (self.cfg.fees_bps / 10_000)
+        role: Literal["maker", "taker"] = "taker"
+        try:
+            return float(cm.fee_amount(notional=notional, role=role))
+        except Exception:
+            return notional * (self.cfg.fees_bps / 10_000)
+
+    @property
+    def cost_model(self) -> CostModel | None:
+        return self._cost_model

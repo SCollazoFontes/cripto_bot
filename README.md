@@ -144,6 +144,34 @@ Loop en memoria para validar estabilidad de builders con ticks sintéticos.
 ### inspect_last.py
 Inspección rápida de archivos de micro-barras con métricas de calidad.
 
+### run_live.py (desde CSV, con reporting enriquecido)
+Runner sencillo que reproduce un flujo "live-like" a partir de un CSV (por reproducibilidad) y guarda salidas para análisis:
+
+- equity.csv: t, price, qty, cash, equity por barra
+- trades.csv: enriquecido con costes estimados vs reales (fee/slippage)
+- decisions.csv: decisiones ejecutadas (t, price, side, qty, reason)
+- summary.json: equity inicial/final, retorno total y número de barras
+- manifest.json: metadatos del run (estrategia, params, símbolo, costes)
+- quality.json: duración del run y barras/seg
+
+Ejemplo:
+
+```bash
+PYTHONPATH=$(pwd)/src python -m tools.run_live \
+  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ) \
+  --source csv --csv runs/quick_check/data.csv \
+  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 10000
+```
+
+En macOS, para evitar que el portátil duerma con la tapa cerrada mientras corre un run nocturno (7h ~ 25200s):
+
+```bash
+caffeinate -dimsu -t 25200 -- python -m tools.run_live \
+  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ) \
+  --source csv --csv runs/quick_check/data.csv \
+  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 10000
+```
+
 ## 🌐 Entorno y Configuración
 
 Variables de entorno importantes (`.env`):

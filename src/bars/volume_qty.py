@@ -6,7 +6,7 @@ Micro-velas por volumen acumulado (cantidad de unidades).
 Regla
 -----
 Se cierra una barra cuando la suma de cantidades (∑ qty) alcanza `qty_limit`.
-Por simplicidad, este builder **no** parte trades. Si el último trade supera
+Por simplicidad, este builder no parte trades. Si el último trade supera
 el umbral, se incluye entero y luego se cierra. Para ejecución exacta al
 límite sería necesario "split de trade" (TODO si se requiere).
 
@@ -16,13 +16,6 @@ Las "volume bars" normalizan por actividad real de negociación (cantidad).
 Aportan más barras cuando hay mayor participación y menos cuando el mercado
 está lento, reduciendo el sesgo temporal de las velas cronológicas.
 
-Uso típico
-----------
-    builder = VolumeQtyBarBuilder(qty_limit=5.0)
-    for trade in stream:
-        bar = builder.update(trade)
-        if bar:
-            do_something(bar)
 """
 
 from __future__ import annotations

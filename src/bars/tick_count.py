@@ -7,22 +7,6 @@ Regla de cierre
 Se cierra una barra cuando el número de trades acumulados alcanza `tick_limit`.
 Cada trade incrementa el contador en 1, con independencia de su tamaño/volumen.
 
-Motivación
-----------
-Las "tick bars" normalizan el eje horizontal por actividad (número de
-transacciones) en vez de por tiempo. En mercados con ráfagas de actividad,
-producen más barras cuando hay más información y menos cuando el mercado está
-lento, reduciendo el "time deformation bias" típico de las velas temporales.
-
-Uso típico
-----------
-    builder = TickCountBarBuilder(tick_limit=100)
-    for trade in stream:
-        closed = builder.update(trade)
-        if closed:
-            # procesar la microvela cerrada
-            do_something(closed)
-
 Notas de implementación
 -----------------------
 - Se apoya en las estructuras base definidas en `bars/base.py`:

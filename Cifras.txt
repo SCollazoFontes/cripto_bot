@@ -1,0 +1,204 @@
+# DOCUMENTACIÓN DE NÚMEROS PREFIJADOS EN EL PROYECTO
+# Formato: ARCHIVO | LÍNEA | VARIABLE | VALOR | RAZÓN
+
+================================================================================
+CONFIGURACIÓN GENERAL
+================================================================================
+
+src/core/types.py
+------------------
+Línea 15: OrderStatus.NEW = 1
+  RAZÓN: Estado inicial de una orden recién creada, antes de ser enviada al broker
+
+Línea 16: OrderStatus.SUBMITTED = 2
+  RAZÓN: Orden enviada al broker pero aún no ejecutada
+
+Línea 17: OrderStatus.FILLED = 3
+  RAZÓN: Orden completamente ejecutada
+
+Línea 18: OrderStatus.CANCELED = 4
+  RAZÓN: Orden cancelada antes de ser ejecutada
+
+Línea 19: OrderStatus.REJECTED = 5
+  RAZÓN: Orden rechazada por el broker (ej: fondos insuficientes)
+
+
+src/core/config.py
+------------------
+Línea 12: DEFAULT_CASH = 10000.0
+  RAZÓN: Capital inicial por defecto para backtesting/trading
+  AJUSTABLE: Sí, según capital disponible del usuario
+
+Línea 13: DEFAULT_FEES_BPS = 10.0
+  RAZÓN: Comisiones típicas de exchanges (0.1% = 10 basis points)
+  AJUSTABLE: Sí, depende del exchange y nivel VIP
+
+Línea 14: DEFAULT_SLIP_BPS = 5.0
+  RAZÓN: Slippage estimado en órdenes market (0.05% = 5 bps)
+  AJUSTABLE: Sí, depende de liquidez y tamaño de orden
+
+
+================================================================================
+ESTRATEGIA MOMENTUM
+================================================================================
+
+src/strategies/momentum.py
+--------------------------
+Línea 45: lookback_ticks: int = 20
+  RAZÓN: Ventana de barras para calcular momentum (por defecto)
+  AJUSTABLE: Sí - valores menores = más agresivo, mayores = más conservador
+
+Línea 46: entry_threshold: float = 0.001
+  RAZÓN: Cambio porcentual mínimo para entrar (0.1%)
+  AJUSTABLE: Sí - valores menores = más trades, mayores = más selectivo
+
+Línea 47: exit_threshold: float = 0.0005
+  RAZÓN: Cambio porcentual para salir (0.05%)
+  AJUSTABLE: Sí - debe ser menor que entry_threshold típicamente
+
+Línea 48: qty_frac: float = 0.95
+  RAZÓN: Fracción del capital a usar por trade (95%)
+  AJUSTABLE: Sí - mayor = más apalancamiento, menor = más conservador
+
+
+================================================================================
+GENERACIÓN DE BARRAS
+================================================================================
+
+src/bars/volume_bars.py
+-----------------------
+Línea 35: default_threshold: float = 1000.0
+  RAZÓN: Volumen acumulado para cerrar una barra (en unidades de asset)
+  AJUSTABLE: Sí - valores menores = más barras, mayores = menos barras
+
+Línea 52: min_trades: int = 1
+  RAZÓN: Mínimo de trades para considerar una barra válida
+  AJUSTABLE: No - valor lógico mínimo
+
+
+src/bars/time_bars.py
+---------------------
+Línea 30: interval_sec: int = 60
+  RAZÓN: Intervalo de tiempo para barras (60 segundos = 1 minuto)
+  AJUSTABLE: Sí - común: 60, 300, 900, 3600 (1min, 5min, 15min, 1h)
+
+
+================================================================================
+BROKERS Y EJECUCIÓN
+================================================================================
+
+src/brokers/binance_paper.py
+----------------------------
+Línea 45: _cash: float = 10000.0
+  RAZÓN: Capital inicial en paper trading
+  AJUSTABLE: Sí - debe coincidir con config
+
+Línea 48: fees_bps: float = 10.0
+  RAZÓN: Comisiones de Binance (Spot: 0.1% = 10 bps)
+  NOTA: Binance Spot real: Maker 0.1%, Taker 0.1%
+
+Línea 49: slip_bps: float = 5.0
+  RAZÓN: Slippage estimado en paper trading
+  AJUSTABLE: Sí - depende de volumen del par
+
+
+src/core/executor_live.py
+-------------------------
+Línea 65: min_order_size: float = 0.0001
+  RAZÓN: Tamaño mínimo de orden para BTC (Binance limit: 0.00001 BTC)
+  NOTA: Cada par tiene su propio minimum, esto es conservador
+
+Línea 82: precision: int = 8
+  RAZÓN: Decimales para cantidad de BTC (Binance usa 8 decimales)
+  AJUSTABLE: No - estándar de Binance
+
+
+================================================================================
+WEBSOCKETS Y CONEXIONES
+================================================================================
+
+src/streams/binance_trades.py
+-----------------------------
+Línea 45: ping_interval: int = 20
+  RAZÓN: Intervalo de ping para mantener conexión WebSocket viva (segundos)
+  AJUSTABLE: Sí - Binance recomienda <60s
+
+Línea 46: ping_timeout: int = 10
+  RAZÓN: Timeout esperando pong del servidor (segundos)
+  AJUSTABLE: Sí - debe ser menor que ping_interval
+
+Línea 55: max_reconnect_delay: int = 60
+  RAZÓN: Delay máximo entre reintentos de reconexión (segundos)
+  AJUSTABLE: Sí - evita sobrecarga con reintentos muy frecuentes
+
+Línea 60: initial_delay: float = 1.0
+  RAZÓN: Delay inicial antes del primer reintento (segundos)
+  AJUSTABLE: Sí - backoff exponencial desde este valor
+
+
+================================================================================
+HERRAMIENTAS Y SCRIPTS
+================================================================================
+
+tools/run_live_binance.py
+-------------------------
+Línea 125: duration: int = 600
+  RAZÓN: Duración por defecto del run (600s = 10 minutos)
+  AJUSTABLE: Sí - argumento de CLI
+
+Línea 128: update_interval: int = 10
+  RAZÓN: Frecuencia de actualización del status en terminal (segundos)
+  AJUSTABLE: Sí - afecta verbosidad del output
+
+Línea 145: buffer_size: int = 10000
+  RAZÓN: Tamaño del buffer para almacenar trades en memoria
+  AJUSTABLE: Sí - mayor = más memoria pero menos I/O
+
+
+================================================================================
+TESTS
+================================================================================
+
+tests/test_bars.py
+------------------
+Línea 45: volume_threshold: float = 100.0
+  RAZÓN: Threshold para tests de volume bars
+  NOTA: Valor de prueba, no afecta producción
+
+Línea 78: time_interval: int = 5
+  RAZÓN: Intervalo de 5 segundos para tests de time bars
+  NOTA: Valor de prueba, no afecta producción
+
+
+tests/test_executor.py
+----------------------
+Línea 55: initial_cash: float = 10000.0
+  RAZÓN: Capital inicial para tests de executor
+  NOTA: Valor de prueba, debe coincidir con DEFAULT_CASH
+
+
+================================================================================
+NÚMEROS CRÍTICOS A REVISAR
+================================================================================
+
+1. FEES Y SLIPPAGE
+   - fees_bps = 10.0 (0.1%) → Verificar con tarifas reales de Binance
+   - slip_bps = 5.0 (0.05%) → Ajustar según liquidez del par
+
+2. STRATEGY PARAMETERS
+   - entry_threshold = 0.001 (0.1%) → MUY AGRESIVO, genera muchos trades
+   - exit_threshold = 0.0005 (0.05%) → Muy cercano a entry, puede causar overtrading
+   - qty_frac = 0.95 (95%) → Muy alto, deja poco margen de seguridad
+
+3. ORDEN SIZING
+   - min_order_size = 0.0001 BTC → OK para Binance (mínimo real: 0.00001)
+   - precision = 8 → OK, estándar de BTC
+
+4. WEBSOCKET TIMEOUTS
+   - ping_interval = 20s → OK
+   - ping_timeout = 10s → OK
+   - max_reconnect_delay = 60s → OK
+
+5. VOLUME BAR THRESHOLD
+   - default_threshold = 1000.0 → Debe ajustarse según volumen del par
+     Para BTCUSDT, considerar valores entre 0.1 - 10.0 BTC

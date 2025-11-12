@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from .base import BarBuilder
+from .composite import CompositeBarBuilder
 from .dollar import DollarBarBuilder
 from .imbalance import ImbalanceBarBuilder
 from .tick_count import TickCountBarBuilder
@@ -69,3 +70,7 @@ register_builder("value", DollarBarBuilder)
 register_builder("imbalance", ImbalanceBarBuilder)
 register_builder("imbalance_qty", ImbalanceBarBuilder)
 register_builder("imbalance_tick", ImbalanceBarBuilder)
+
+# Composite / multi-regla
+register_builder("composite", CompositeBarBuilder)
+register_builder("multi", CompositeBarBuilder)

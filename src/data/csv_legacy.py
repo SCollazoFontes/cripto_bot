@@ -37,7 +37,7 @@ from data.validate import validate
 
 def _to_datetime_ms(x: pd.Series | Sequence | int | float | str) -> pd.Series:
     """
-    Normaliza entradas a *ms desde epoch* como Serie numérica.
+    Normaliza entradas a ms desde epoch como Serie numérica.
     - Si es numérica, se asume ms.
     - Si es string/datetime, se parsea y se pasa a ms.
     """

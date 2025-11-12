@@ -14,7 +14,7 @@ red) y tests/engine-like. No persiste a disco. Las órdenes se guardan en memori
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from brokers.base import (
     BaseBroker,
@@ -28,6 +28,7 @@ from brokers.base import (
     SymbolFilters,
     TimeInForce,
 )
+from core.costs import CostModel
 
 
 def _mk_order_kw(**kwargs: Any):
@@ -102,6 +103,7 @@ class BinancePaperBroker(BaseBroker):
         *,
         symbol_filters: dict[str, SymbolFilters] | None = None,
         exec_cfg: _ExecCfg | None = None,
+        cost_model: CostModel | None = None,
     ) -> None:
         self._filters: dict[str, SymbolFilters] = symbol_filters or {}
         self._exec: _ExecCfg = exec_cfg or _ExecCfg()
@@ -109,6 +111,10 @@ class BinancePaperBroker(BaseBroker):
         self._positions: dict[str, float] = {}
         self._usdt: float = 10_000.0
         self._next_id: int = 1
+        # Modelo de costes opcional (slippage y fees realistas)
+        self._cost_model: CostModel | None = cost_model
+        # Último precio conocido por símbolo (para ejecutar MARKET inmediatamente)
+        self._last_px: dict[str, float] = {}
 
     # ------------------------------------------------------------------ #
     # API obligatoria de BaseBroker
@@ -154,6 +160,14 @@ class BinancePaperBroker(BaseBroker):
         return outs
 
     def submit_order(self, req: OrderRequest) -> Order:
+        # Validación: rechazar dicts
+        if isinstance(req, dict):
+            raise TypeError(
+                f"submit_order() requiere OrderRequest, recibió dict. "
+                f"Use OrderRequest(symbol=..., side=..., order_type=..., quantity=...) "
+                f"en lugar de dict. Dict recibido: {req}"
+            )
+
         # normalizar side a OrderSide (no str)
         side_val: OrderSide
         try:
@@ -208,6 +222,12 @@ class BinancePaperBroker(BaseBroker):
             client_order_id=req.client_order_id,
         )
         self._orders[oid] = o
+
+        # Si es MARKET y tenemos un precio actual, ejecutar inmediatamente
+        if tval is OrderType.MARKET and req.symbol in self._last_px:
+            current_price = self._last_px[req.symbol]
+            self._fill_market(o, current_price, now)
+
         return self._to_order(o, oid=oid)
 
     def cancel_order(self, symbol: str, order_id: str | int) -> Order:
@@ -238,6 +258,9 @@ class BinancePaperBroker(BaseBroker):
 
     # ----------------------------------------------------------------
     def on_tick(self, *, symbol: str, mid: float, ts: float) -> None:
+        # Guardar el último precio para este símbolo
+        self._last_px[symbol] = mid
+
         # Ejecuta/avanza cualquier orden OPEN del símbolo
         # (matching muy simple: MARKET al mid; LIMIT al cruzar precio)
         for _oid, o in list(self._orders.items()):
@@ -268,12 +291,12 @@ class BinancePaperBroker(BaseBroker):
         if o.status in _TERMINAL:
             return
         # Slippage y fee por ejecución (modelo simple: 1 fill por tick)
-        px = self._apply_slippage(mid, o.side)
+        px = self._effective_price(mid, o.side, role="taker")
         qty_left = o.requested_qty - o.filled_qty
         if qty_left <= 0:
             return
         fill_qty = qty_left
-        fee = abs(px * fill_qty) * self._exec.fee_pct
+        fee = self._fee_amount(px, fill_qty, role="taker")
 
         o.fills.append(_mk_fill_kw(price=px, qty=fill_qty, timestamp=ts, commission=fee))
         o.filled_qty += fill_qty
@@ -293,12 +316,12 @@ class BinancePaperBroker(BaseBroker):
         if not cross:
             return
         # Lógica de fill simple: todo de golpe al precio límite con slippage
-        px = self._apply_slippage(o.price, o.side)
+        px = self._effective_price(o.price, o.side, role="maker")
         qty_left = o.requested_qty - o.filled_qty
         if qty_left <= 0:
             return
         fill_qty = qty_left
-        fee = abs(px * fill_qty) * self._exec.fee_pct
+        fee = self._fee_amount(px, fill_qty, role="maker")
 
         o.fills.append(_mk_fill_kw(price=px, qty=fill_qty, timestamp=ts, commission=fee))
         o.filled_qty += fill_qty
@@ -416,6 +439,35 @@ class BinancePaperBroker(BaseBroker):
             return px * (1.0 + self._exec.slip_pct)
         else:
             return px * (1.0 - self._exec.slip_pct)
+
+    # --- CostModel helpers -------------------------------------------------
+    def _effective_price(
+        self, base_price: float, side: OrderSide, *, role: Literal["maker", "taker"]
+    ) -> float:
+        """Devuelve el precio efectivo aplicando el modelo de slippage si existe."""
+        cm = self._cost_model
+        if cm is None:
+            return self._apply_slippage(base_price, side)
+        side_s = "buy" if side is OrderSide.BUY else "sell"
+        try:
+            return float(cm.effective_price(base_price=base_price, side=side_s, role=role))
+        except Exception:
+            # Fallback robusto
+            return self._apply_slippage(base_price, side)
+
+    def _fee_amount(self, price: float, qty: float, *, role: Literal["maker", "taker"]) -> float:
+        cm = self._cost_model
+        notional = abs(price * qty)
+        if cm is None:
+            return notional * self._exec.fee_pct
+        try:
+            return float(cm.fee_amount(notional=notional, role=role))
+        except Exception:
+            return notional * self._exec.fee_pct
+
+    @property
+    def cost_model(self) -> CostModel | None:
+        return self._cost_model
 
     def _now(self) -> float:
         """Retorna timestamp actual en segundos."""

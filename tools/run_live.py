@@ -14,12 +14,16 @@ Dependencias del core (según tu repo actual):
 
 import argparse
 import csv
+from datetime import UTC, datetime
 import json
 import pathlib
+import time
 
 # Se asume que PYTHONPATH incluye `${workspaceFolder}/src` (configurado en .vscode/settings.json)
 # ---- Core broker/estrategias (según tu estructura actual) ----
 from core.broker_sim import SimBroker, SimBrokerConfig  # noqa: E402
+from core.costs import estimate_costs  # noqa: E402
+from core.decisions_log import write_decisions_csv  # noqa: E402
 from core.strategy_runtime import (
     build_position_state,
 )  # usa PositionState(entry_price=...)  # noqa: E402
@@ -111,7 +115,7 @@ def load_bars_from_csv(
 def save_equity_trades(
     run_dir: pathlib.Path,
     equity_rows: list[tuple[float, float, float, float, float]],
-    trade_rows: list[tuple[float, str, float, float, float, float, str]],
+    trade_rows: list[dict],
 ) -> None:
     eqf = run_dir / "equity.csv"
     trf = run_dir / "trades.csv"
@@ -119,10 +123,31 @@ def save_equity_trades(
         w = csv.writer(f)
         w.writerow(["t", "price", "qty", "cash", "equity"])
         w.writerows(equity_rows)
-    with trf.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["t", "side", "price", "qty", "cash", "equity", "reason"])
-        w.writerows(trade_rows)
+    if trade_rows:
+        # Campos enriquecidos para análisis posterior
+        trade_cols = [
+            "t",
+            "symbol",
+            "side",
+            "req_price",
+            "exec_price",
+            "qty",
+            "cash",
+            "equity",
+            "fee_real",
+            "slippage_real_abs",
+            "cost_real_abs",
+            "cost_est_abs",
+            "cost_est_bps",
+            "reason",
+        ]
+        with trf.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=trade_cols)
+            w.writeheader()
+            for row in trade_rows:
+                # ensure all keys exist
+                out = {k: row.get(k) for k in trade_cols}
+                w.writerow(out)
 
 
 def save_summary(
@@ -141,6 +166,34 @@ def save_summary(
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"summary.json escrito: {run_dir/'summary.json'}")
+
+
+def save_manifest(run_dir: pathlib.Path, args: argparse.Namespace, started_ts: float) -> None:
+    manifest = {
+        "run_id": datetime.fromtimestamp(started_ts, tz=UTC).strftime("%Y%m%dT%H%M%SZ"),
+        "started_ts": started_ts,
+        "strategy": args.strategy,
+        "params": json.loads(args.params) if args.params else {},
+        "symbol": args.symbol,
+        "source": args.source,
+        "fees_bps": args.fees_bps,
+        "slip_bps": args.slip_bps,
+        "cash": args.cash,
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+
+def save_quality(
+    run_dir: pathlib.Path, *, bars: int, started_ts: float, finished_ts: float
+) -> None:
+    dt = max(0.0, finished_ts - started_ts)
+    bps = (bars / dt) if dt > 0 else 0.0
+    quality = {
+        "bars_processed": bars,
+        "duration_sec": dt,
+        "bars_per_sec": bps,
+    }
+    (run_dir / "quality.json").write_text(json.dumps(quality, indent=2))
 
 
 # --------------
@@ -168,6 +221,8 @@ def maybe_load_strategy(name: str | None, params_json: str | None):
 def run(args: argparse.Namespace) -> None:
     run_dir = pathlib.Path(args.run_dir).expanduser().resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+    started_ts = time.time()
+    save_manifest(run_dir, args, started_ts)
 
     # Carga de datos
     if args.source.lower() != "csv":
@@ -194,11 +249,28 @@ def run(args: argparse.Namespace) -> None:
     strategy = maybe_load_strategy(args.strategy, args.params)
 
     equity_rows: list[tuple[float, float, float, float, float]] = []
-    trade_rows: list[tuple[float, str, float, float, float, float, str]] = []
+    trade_rows: list[dict] = []
+    decisions_rows: list[dict] = []
 
     # --- Loop principal ---
     n = len(bars)
+
+    # Limitar número de barras si se especifica
+    if args.max_bars and args.max_bars < n:
+        n = args.max_bars
+        bars = bars[:n]
+
+    start_time = time.time()
+
     for i, b in enumerate(bars):
+        # Simular tiempo real con delay entre barras
+        if args.realtime_delay and args.realtime_delay > 0 and i > 0:
+            time.sleep(args.realtime_delay)
+            elapsed = time.time() - start_time
+            eta = (n - i) * args.realtime_delay
+            if i % 10 == 0:  # Log cada 10 barras
+                print(f"Barra {i}/{n} | Elapsed: {elapsed:.1f}s | ETA: {eta:.1f}s")
+
         t = float(b.get("t"))
         price = float(b.get("close"))
 
@@ -273,7 +345,16 @@ def run(args: argparse.Namespace) -> None:
                 qty = abs(pos_qty) * size
 
             if qty > 0:
-                broker.submit_order(
+                # Estimación de costes previa (bps → absolutos)
+                notional = price * qty
+                est = estimate_costs(
+                    notional=abs(notional),
+                    side=order_side.lower(),
+                    fee_bps=args.fees_bps,
+                    slippage_bps=args.slip_bps,
+                )
+
+                res = broker.submit_order(
                     symbol=args.symbol,
                     side=order_side,
                     qty=qty,
@@ -284,11 +365,50 @@ def run(args: argparse.Namespace) -> None:
                 equity_post = broker.equity(mark_price=price)
                 cash_post = broker.cash
                 pos_post = broker.position_qty
-                trade_rows.append((t, order_side, price, pos_post, cash_post, equity_post, reason))
+                # Si el broker devuelve detalles (SimBroker), intenta extraer exec_price/fee
+                exec_price = None
+                fee_real = None
+                if isinstance(res, dict):
+                    exec_price = float(res.get("exec_price", price))
+                    fee_real = float(res.get("fee", 0.0))
+                else:
+                    exec_price = price
+                    fee_real = 0.0
+                slip_real_abs = abs(float(exec_price) - price) * qty
+                trade_rows.append(
+                    {
+                        "t": t,
+                        "symbol": args.symbol,
+                        "side": order_side,
+                        "req_price": price,
+                        "exec_price": exec_price,
+                        "qty": pos_post,
+                        "cash": cash_post,
+                        "equity": equity_post,
+                        "fee_real": fee_real,
+                        "slippage_real_abs": slip_real_abs,
+                        "cost_real_abs": float(fee_real) + slip_real_abs,
+                        "cost_est_abs": est["total_cost_abs"],
+                        "cost_est_bps": est["total_cost_bps"],
+                        "reason": reason,
+                    }
+                )
+                decisions_rows.append(
+                    {
+                        "t": int(t),
+                        "price": price,
+                        "side": order_side,
+                        "qty": qty,
+                        "decision": "EXECUTE",
+                        "reason": reason,
+                    }
+                )
 
     # Guardar resultados
     save_equity_trades(run_dir, equity_rows, trade_rows)
+    write_decisions_csv(run_dir, decisions_rows)
     save_summary(run_dir, equity_rows)
+    save_quality(run_dir, bars=len(equity_rows), started_ts=started_ts, finished_ts=time.time())
 
 
 def parse_args() -> argparse.Namespace:
@@ -334,6 +454,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=60_000,
         help="Paso en ms si se sintetiza ts (default 60s)",
+    )
+    p.add_argument(
+        "--realtime-delay",
+        type=float,
+        default=None,
+        help="Delay en segundos entre barras para simular tiempo real (ej: 1.0 = 1 barra/seg)",
+    )
+    p.add_argument(
+        "--max-bars",
+        type=int,
+        default=None,
+        help="Número máximo de barras a procesar (útil con --realtime-delay)",
     )
 
     return p.parse_args()

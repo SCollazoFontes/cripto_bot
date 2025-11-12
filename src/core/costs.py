@@ -1,7 +1,9 @@
 # src/core/costs.py
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal, Protocol
 
 Side = Literal["buy", "sell"]
 
@@ -53,6 +55,99 @@ def _norm_side(side: str | Side) -> Side:
     if s not in ("buy", "sell"):
         raise ValueError("side debe ser 'buy' o 'sell'.")
     return s  # type: ignore[return-value]
+
+
+# ==============================
+# Modelos configurables (realistas)
+# ==============================
+
+
+class SpreadProvider(Protocol):
+    def __call__(self, symbol: str | None = None) -> float | None:
+        """Devuelve spread (ask - bid) actual o None si desconocido."""
+
+
+@dataclass
+class SlippageModel:
+    """
+    Modelo de slippage configurable.
+
+    mode:
+      - "fixed_bps": usa `fixed_bps` (mismo para buy/sell)
+      - "spread_frac": desplaza una fracción del spread (e.g., 0.5 = mitad del spread)
+      - "custom": delega en `custom_rate_fn` (devuelve rate en [0, +inf))
+    """
+
+    mode: Literal["fixed_bps", "spread_frac", "custom"] = "fixed_bps"
+    fixed_bps: float = 0.0
+    spread_frac: float = 0.0
+    custom_rate_fn: Callable[[Side, float | None, str | None], float] | None = None
+
+    def slippage_rate(self, side: Side, spread: float | None, symbol: str | None = None) -> float:
+        if self.mode == "fixed_bps":
+            return max(0.0, self.fixed_bps / 10_000.0)
+        if self.mode == "spread_frac":
+            if spread is None or self.spread_frac <= 0.0:
+                return 0.0
+            # rate relativo = (frac * spread) / mid  (aprox; el caller aplica sobre precio)
+            # Simplificamos: devolvemos un rate efectivo en función del spread como proporción del precio.
+            # El caller debe pasar el precio base (mid o limit), por lo que aplicar (1±rate) es válido.
+            return max(0.0, self.spread_frac * (spread))  # el caller normaliza vs precio base
+        if self.mode == "custom" and self.custom_rate_fn is not None:
+            return max(0.0, float(self.custom_rate_fn(side, spread, symbol)))
+        return 0.0
+
+
+@dataclass
+class CostModel:
+    """
+    Modelo de costes realista con maker/taker y slippage configurable.
+
+    - maker_fee_rate/taker_fee_rate: comisiones como proporción (0.001 = 10 bps)
+    - maker_slip/taker_slip: slippage model por rol
+    - spread_provider: callable opcional para obtener spread (ask-bid)
+    - symbol: contexto opcional (permite spreads por símbolo)
+    """
+
+    maker_fee_rate: float = 0.001  # 10 bps por defecto
+    taker_fee_rate: float = 0.001  # 10 bps por defecto
+    maker_slip: SlippageModel = dataclass(init=False)  # type: ignore[assignment]
+    taker_slip: SlippageModel = dataclass(init=False)  # type: ignore[assignment]
+    spread_provider: SpreadProvider | None = None
+    symbol: str | None = None
+
+    def __post_init__(self) -> None:
+        # Inicializamos defaults mutables correctamente
+        if not isinstance(getattr(self, "maker_slip", None), SlippageModel):
+            object.__setattr__(self, "maker_slip", SlippageModel(mode="fixed_bps", fixed_bps=0.0))
+        if not isinstance(getattr(self, "taker_slip", None), SlippageModel):
+            object.__setattr__(self, "taker_slip", SlippageModel(mode="fixed_bps", fixed_bps=5.0))
+
+    def fee_amount(self, *, notional: float, role: Literal["maker", "taker"]) -> float:
+        _ensure_non_negative(notional, "notional")
+        rate = self.maker_fee_rate if role == "maker" else self.taker_fee_rate
+        return max(0.0, notional * max(0.0, rate))
+
+    def effective_price(
+        self,
+        *,
+        base_price: float,
+        side: Side | str,
+        role: Literal["maker", "taker"],
+    ) -> float:
+        """Aplica slippage al precio base según rol y lado."""
+        _ensure_non_negative(base_price, "base_price")
+        s = _norm_side(side)
+        spread = self.spread_provider(self.symbol) if self.spread_provider else None
+        slip_model = self.maker_slip if role == "maker" else self.taker_slip
+        rate = slip_model.slippage_rate(s, spread, self.symbol)
+        # Si mode=spread_frac y devolvimos un valor absoluto, conviértelo a rate sobre el precio
+        if slip_model.mode == "spread_frac" and spread is not None:
+            rate = rate / max(base_price, 1e-12)
+        if s == "buy":
+            return base_price * (1.0 + rate)
+        else:
+            return base_price * (1.0 - rate)
 
 
 # ==============================

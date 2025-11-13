@@ -30,25 +30,25 @@ class MomentumV2Strategy(Strategy):
     Parámetros:
     -----------
     lookback_ticks : int
-        Ventana para calcular media móvil (default: 30, vs 5 en V1)
+        Ventana para calcular media móvil (default: 20, balanced)
     entry_threshold : float
-        Cambio % mínimo para entrada (default: 0.003 = 0.3%, vs 0.001% en V1)
+        Cambio % mínimo para entrada (default: 0.002 = 0.2%, balanced)
     exit_threshold : float
-        Cambio % para salida (default: 0.0015 = 0.15%)
+        Cambio % para salida (default: 0.001 = 0.1%)
     qty_frac : float
-        Fracción del capital por trade (default: 0.4 = 40%, vs 95% en V1)
+        Fracción del capital por trade (default: 0.5 = 50%, balanced)
     stop_loss_pct : float
-        Stop loss en % desde entrada (default: 0.01 = 1%)
+        Stop loss en % desde entrada (default: 0.015 = 1.5%)
     take_profit_pct : float
-        Take profit en % desde entrada (default: 0.02 = 2%)
+        Take profit en % desde entrada (default: 0.025 = 2.5%)
     volatility_window : int
         Ventana para calcular volatilidad (default: 50)
     min_volatility : float
-        Volatilidad mínima para operar (default: 0.0005 = 0.05%)
+        Volatilidad mínima para operar (default: 0.0003 = 0.03%)
     max_volatility : float
-        Volatilidad máxima para operar (default: 0.02 = 2%)
+        Volatilidad máxima para operar (default: 0.025 = 2.5%)
     cooldown_bars : int
-        Barras de espera después de cerrar posición (default: 5)
+        Barras de espera después de cerrar posición (default: 3)
     trend_confirmation : bool
         Requiere confirmación de tendencia (default: True)
     """
@@ -57,16 +57,16 @@ class MomentumV2Strategy(Strategy):
 
     def __init__(
         self,
-        lookback_ticks: int = 30,
-        entry_threshold: float = 0.003,
-        exit_threshold: float = 0.0015,
-        qty_frac: float = 0.4,
-        stop_loss_pct: float = 0.01,
-        take_profit_pct: float = 0.02,
+        lookback_ticks: int = 20,  # Reducido de 30 → más reactivo
+        entry_threshold: float = 0.002,  # Reducido de 0.003 → más entradas
+        exit_threshold: float = 0.001,  # Reducido de 0.0015 → salidas más ágiles
+        qty_frac: float = 0.5,  # Aumentado de 0.4 → más exposición
+        stop_loss_pct: float = 0.015,  # Aumentado de 0.01 → dar más margen
+        take_profit_pct: float = 0.025,  # Aumentado de 0.02 → buscar más profit
         volatility_window: int = 50,
-        min_volatility: float = 0.0005,
-        max_volatility: float = 0.02,
-        cooldown_bars: int = 5,
+        min_volatility: float = 0.0003,  # Reducido de 0.0005 → operar en calma
+        max_volatility: float = 0.025,  # Aumentado de 0.02 → tolerar más volatilidad
+        cooldown_bars: int = 3,  # Reducido de 5 → menos espera
         trend_confirmation: bool = True,
         debug: bool = False,
         cost_model: CostModel | None = None,

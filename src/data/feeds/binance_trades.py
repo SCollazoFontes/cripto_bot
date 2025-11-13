@@ -28,11 +28,11 @@ from websockets.exceptions import InvalidMessage, InvalidStatusCode
 # -------------------------
 # Configuración y constantes
 # -------------------------
-CONNECT_TIMEOUT_S = 6
+CONNECT_TIMEOUT_S = 10
 READ_TIMEOUT_S = 30
 PING_INTERVAL_S = 20
 PING_TIMEOUT_S = 10
-FIRST_MSG_TIMEOUT_S = 12
+FIRST_MSG_TIMEOUT_S = 30
 MAX_QUEUE = 1024
 
 WS_BASE_PROD = "wss://stream.binance.com:9443"
@@ -138,10 +138,18 @@ async def iter_trades(
     agen = _consume(url)
 
     try:
+        print(
+            f"[binance_trades] Esperando primer mensaje (timeout: {FIRST_MSG_TIMEOUT_S}s)...",
+            flush=True,
+        )
         while True:
             msg = await asyncio.wait_for(agen.__anext__(), timeout=FIRST_MSG_TIMEOUT_S)
             tick = _map_trade(msg)
             if tick is not None:
+                print(
+                    f"[binance_trades] ✅ Primer trade recibido: precio={tick['price']:.2f}",
+                    flush=True,
+                )
                 yield tick
                 break
     except TimeoutError as exc:

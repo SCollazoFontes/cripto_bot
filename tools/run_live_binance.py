@@ -32,6 +32,7 @@ from bars.volume_qty import VolumeQtyBarBuilder
 from brokers.base import OrderRequest
 from brokers.binance_paper import BinancePaperBroker
 from core.metrics import calculate_all_metrics
+from core.spread_tracker import SpreadTracker
 from data.feeds.binance_trades import iter_trades
 from strategies.base import get_strategy_class
 
@@ -202,7 +203,7 @@ async def run_live_trading(
     duration: int,
     cash: float,
     fees_bps: float,
-    slip_bps: float,
+    slip_bps: float | None,
     testnet: bool,
     strategy_name: str | None,
     strategy_params: str | None,
@@ -210,18 +211,60 @@ async def run_live_trading(
     """
     Ejecuta trading en vivo durante `duration` segundos.
     """
+    # Inicializar SpreadTracker si slip_bps es None
+    spread_tracker: SpreadTracker | None = None
+    if slip_bps is None:
+        spread_tracker = SpreadTracker(symbol=symbol, window_size=100, testnet=testnet)
+        # Iniciar en background
+        loop = asyncio.get_event_loop()
+        spread_tracker.start_background(loop)
+        print("[run_live] 📊 Slippage dinámico activado (basado en spread)", flush=True)
+        # Esperar un momento para recolectar datos iniciales
+        await asyncio.sleep(2)
+
     # Configuración de ejecución con fees y slippage
     from brokers.binance_paper import _ExecCfg
 
+    # Si slip_bps es None, calcular dinámicamente desde el spread
+    if slip_bps is None and spread_tracker:
+        # Usar spread promedio inicial como fallback
+        await asyncio.sleep(1)  # dar tiempo a recolectar samples
+        initial_spread = spread_tracker.get_spread()
+        effective_slip_pct = (initial_spread * 0.5) / 10000.0 if initial_spread > 0 else 0.0005
+    else:
+        effective_slip_pct = slip_bps / 10000.0 if slip_bps is not None else 0.0005
+
     exec_cfg = _ExecCfg(
         fee_pct=fees_bps / 10000.0,
-        slip_pct=slip_bps / 10000.0,
+        slip_pct=effective_slip_pct,
     )
 
     # Inicializar broker paper
     broker = BinancePaperBroker(exec_cfg=exec_cfg)
     # Configurar cash inicial manualmente
     broker._usdt = cash
+
+    # Función helper para actualizar slippage dinámicamente
+    def get_dynamic_slip_pct() -> float:
+        if spread_tracker:
+            spread_bps = spread_tracker.get_spread()
+            # Si el spread es 0 o muy pequeño, usar valor conservador de 5 bps
+            if spread_bps < 0.5:
+                return 0.0005  # 5 bps default
+            return (spread_bps * 0.5) / 10000.0
+        return exec_cfg.slip_pct
+
+    # Patchear el broker para usar slippage dinámico
+    if spread_tracker:
+
+        def dynamic_slippage(price: float, side: str) -> float:
+            slip_pct = get_dynamic_slip_pct()
+            if side.upper() == "BUY":
+                return price * (1.0 + slip_pct)
+            else:
+                return price * (1.0 - slip_pct)
+
+        broker._apply_slippage = dynamic_slippage  # type: ignore[assignment]
 
     # Crear executor
     executor = SimpleExecutor(broker)
@@ -259,9 +302,14 @@ async def run_live_trading(
     print(f"   Testnet: {testnet}")
     print(f"   Duración: {duration}s ({duration/60:.1f} min)")
     print(f"   Capital: ${cash:,.2f}")
-    print(f"   Fees: {fees_bps} bps | Slippage: {slip_bps} bps")
+    slip_display = "dinámico (spread)" if slip_bps is None else f"{slip_bps} bps"
+    print(f"   Fees: {fees_bps} bps | Slippage: {slip_display}")
     print(f"   Directorio: {run_dir}")
     print("-" * 60)
+
+    # Variables para logging de spread
+    last_spread_log = time.time()
+    spread_log_interval = 60  # loggear cada 60 segundos
 
     try:
         async for trade_data in iter_trades(symbol, testnet=testnet):
@@ -270,6 +318,22 @@ async def run_live_trading(
             if elapsed >= duration:
                 print(f"\n⏱️  Tiempo completado: {elapsed:.1f}s")
                 break
+
+            # Log periódico de spread dinámico
+            if spread_tracker and bars_emitted > 0:
+                now = time.time()
+                if now - last_spread_log >= spread_log_interval:
+                    stats = spread_tracker.get_stats()
+                    current_spread_bps = stats.current_spread_bps
+                    # El slippage efectivo es 50% del spread
+                    effective_slip_bps = current_spread_bps * 0.5
+                    print(
+                        f"📊 Spread: {current_spread_bps:.2f} bps "
+                        f"(avg: {stats.avg_spread_bps:.2f}, min: {stats.min_spread_bps:.2f}, "
+                        f"max: {stats.max_spread_bps:.2f}) → slip efectivo: {effective_slip_bps:.2f} bps",
+                        flush=True,
+                    )
+                    last_spread_log = now
 
             # Procesar trade
             trades_seen += 1
@@ -416,6 +480,19 @@ async def run_live_trading(
             except Exception as e:
                 print(f"⚠️  Error cerrando posición: {e}")
 
+        # Detener SpreadTracker si está activo
+        if spread_tracker:
+            spread_tracker.stop()
+            stats = spread_tracker.get_stats()
+            print(
+                f"\n📊 Estadísticas de spread: "
+                f"avg={stats.avg_spread_bps:.2f} bps, "
+                f"min={stats.min_spread_bps:.2f}, "
+                f"max={stats.max_spread_bps:.2f}, "
+                f"samples={stats.samples}",
+                flush=True,
+            )
+
         # Guardar resultados
         final_cash = broker._usdt
         final_pos_qty = broker.get_position(symbol)
@@ -519,8 +596,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--testnet", action="store_true", help="Usar Binance Testnet")
     p.add_argument("--duration", type=int, default=600, help="Duración en segundos")
     p.add_argument("--cash", type=float, default=10000.0, help="Capital inicial (USDT)")
-    p.add_argument("--fees-bps", type=float, default=2.5, help="Comisiones en bps")
-    p.add_argument("--slip-bps", type=float, default=1.0, help="Slippage en bps")
+    p.add_argument(
+        "--fees-bps", type=float, default=10.0, help="Comisiones en bps (Binance: 10 bps = 0.1%)"
+    )
+    p.add_argument(
+        "--slip-bps",
+        type=float,
+        default=None,
+        help="Slippage en bps (None = dinámico basado en spread)",
+    )
     p.add_argument("--strategy", default=None, help="Nombre de estrategia (ej: momentum)")
     p.add_argument("--params", default=None, help="Parámetros de estrategia en JSON")
     return p.parse_args()

@@ -16,7 +16,8 @@ import json
 from typing import Any
 
 import websockets
-from websockets.exceptions import InvalidMessage, InvalidStatusCode
+
+# Evitamos depender de nombres de excepciones específicos de la versión
 
 # Configuración
 CONNECT_TIMEOUT_S = 10
@@ -140,18 +141,12 @@ async def iter_book(
                         if isinstance(raw, (bytes, bytearray)):
                             raw = raw.decode("utf-8", "ignore")
                         yield json.loads(raw)
-            except (InvalidStatusCode, InvalidMessage) as e:
-                code = getattr(e, "status_code", None)
-                raise RuntimeError(f"Handshake/WS inválido (HTTP {code}) en {url}.") from e
-            except (TimeoutError, websockets.ConnectionClosedError):
+            except Exception:
                 attempt += 1
                 sleep_s = min(20, 2 ** min(5, attempt))
                 await asyncio.sleep(sleep_s)
                 continue
-            except Exception:
-                attempt += 1
-                await asyncio.sleep(3)
-                continue
+            await asyncio.sleep(0.2)
 
     agen = _consume(url)
 
@@ -161,4 +156,12 @@ async def iter_book(
             if snapshot is not None:
                 yield snapshot
     except asyncio.CancelledError:
+        # Cancelación limpia solicitada por consumidor
         pass
+    finally:
+        try:
+            aclose = getattr(agen, "aclose", None)
+            if callable(aclose):
+                await aclose()
+        except Exception:
+            pass

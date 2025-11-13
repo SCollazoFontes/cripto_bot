@@ -57,14 +57,14 @@ class MomentumV2Strategy(Strategy):
 
     def __init__(
         self,
-        lookback_ticks: int = 20,  # Reducido de 30 → más reactivo
-        entry_threshold: float = 0.002,  # Reducido de 0.003 → más entradas
-        exit_threshold: float = 0.001,  # Reducido de 0.0015 → salidas más ágiles
+        lookback_ticks: int = 15,  # Más corto → más reactivo
+        entry_threshold: float = 0.0005,  # 0.05% → mucho más sensible
+        exit_threshold: float = 0.0003,  # 0.03% → salidas rápidas
         qty_frac: float = 0.5,  # Aumentado de 0.4 → más exposición
         stop_loss_pct: float = 0.015,  # Aumentado de 0.01 → dar más margen
         take_profit_pct: float = 0.025,  # Aumentado de 0.02 → buscar más profit
         volatility_window: int = 50,
-        min_volatility: float = 0.0003,  # Reducido de 0.0005 → operar en calma
+        min_volatility: float = 0.0001,  # 0.01% → operar en mercados muy calmados
         max_volatility: float = 0.025,  # Aumentado de 0.02 → tolerar más volatilidad
         cooldown_bars: int = 3,  # Reducido de 5 → menos espera
         trend_confirmation: bool = True,

@@ -109,11 +109,10 @@ def test_builder_creation():
                 logger.info(f"  Bar #{bars_created}: vol={bar.volume:.2f} trades={bar.trade_count}")
 
         logger.info(f"✅ Builders funcionan correctamente ({bars_created} bars)")
-        return True
 
     except Exception as e:
         logger.error(f"❌ Error en builders: {e}", exc_info=True)
-        return False
+        raise
 
 
 def test_strategy_integration():
@@ -149,11 +148,10 @@ def test_strategy_integration():
             logger.info(f"  Bar #{i+1}: close={price:.2f}")
 
         logger.info("✅ Estrategia cargada correctamente")
-        return True
 
     except Exception as e:
         logger.error(f"❌ Error en estrategia: {e}", exc_info=True)
-        return False
+        raise
 
 
 def test_broker_paper():
@@ -185,11 +183,10 @@ def test_broker_paper():
         # Note: BinancePaperBroker necesita precio de mercado para ejecutar
         # En un entorno real, esto vendría del feed
         logger.info("✅ Broker paper creado correctamente")
-        return True
 
     except Exception as e:
         logger.error(f"❌ Error en broker: {e}", exc_info=True)
-        return False
+        raise
 
 
 async def _full_flow_simulation_async() -> bool:
@@ -261,11 +258,30 @@ def main():
 
     results = {
         "WebSocket Connection": True,
-        "Builder Creation": test_builder_creation(),
-        "Strategy Integration": test_strategy_integration(),
-        "Broker Paper": test_broker_paper(),
+        "Builder Creation": False,
+        "Strategy Integration": False,
+        "Broker Paper": False,
         "Full Flow (1min)": True,
     }
+
+    # Ejecutar y marcar como pass/fail sin depender de returns
+    try:
+        test_builder_creation()
+        results["Builder Creation"] = True
+    except Exception:
+        results["Builder Creation"] = False
+
+    try:
+        test_strategy_integration()
+        results["Strategy Integration"] = True
+    except Exception:
+        results["Strategy Integration"] = False
+
+    try:
+        test_broker_paper()
+        results["Broker Paper"] = True
+    except Exception:
+        results["Broker Paper"] = False
 
     logger.info("")
     logger.info("=" * 60)

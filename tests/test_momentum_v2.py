@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-# tools/test_momentum_v2.py
+# tests/test_momentum_v2.py
 """
 Test rápido de Momentum V2 vs V1.
 
 Ejecuta ambas estrategias con los mismos datos y compara resultados.
+
+Este es un script de comparación manual, no un test unitario automático.
+Para ejecutarlo: python -m pytest tests/test_momentum_v2.py -s
 """
 
 import argparse
@@ -12,6 +15,8 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 import time
+
+import pytest
 
 from bars.base import Trade
 from bars.volume_qty import VolumeQtyBarBuilder
@@ -42,7 +47,7 @@ class SimpleExecutor:
         self.orders.append({"side": "SELL", "qty": qty, "status": order.status})
 
 
-async def test_strategy(
+async def run_strategy_test(
     strategy_name: str, params: dict, duration: int = 600, cash: float = 10000.0
 ):
     """Prueba una estrategia y retorna resultados."""
@@ -155,7 +160,7 @@ async def main():
     # Test V1 (actual)
     print("📊 Test 1/2: Momentum V1 (actual)")
     print("-" * 70)
-    v1_result = await test_strategy(
+    v1_result = await run_strategy_test(
         "momentum",
         {
             "lookback_ticks": 5,
@@ -172,7 +177,7 @@ async def main():
     # Test V2 (mejorado)
     print("📊 Test 2/2: Momentum V2 (mejorado)")
     print("-" * 70)
-    v2_result = await test_strategy(
+    v2_result = await run_strategy_test(
         "momentum_v2",
         {
             "lookback_ticks": 30,
@@ -242,6 +247,21 @@ async def main():
         json.dump({"v1": v1_result, "v2": v2_result}, f, indent=2)
 
     print(f"✅ Resultados guardados en: {results_file}")
+
+
+@pytest.mark.skip(reason="Script manual de comparación, requiere conexión a Binance testnet")
+def test_momentum_comparison():
+    """
+    Test de comparación entre Momentum V1 y V2.
+
+    Este test está deshabilitado por defecto porque:
+    - Requiere conexión a Binance testnet
+    - Toma varios minutos en ejecutarse
+    - Es más útil como script de análisis manual
+
+    Para ejecutarlo manualmente: pytest tests/test_momentum_v2.py::test_momentum_comparison -s
+    """
+    asyncio.run(main())
 
 
 if __name__ == "__main__":

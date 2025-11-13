@@ -1,108 +1,26 @@
-# src/data/storage.py
-"""
-Sistema de almacenamiento persistente para análisis y ML.
-
-Guarda:
-- Trades raw (tick-by-tick)
-- Bars (OHLCV)
-- Features calculados (indicadores técnicos)
-- Signals (decisiones de estrategia)
-- Equity curves
-- Metadata de runs
-
-Formatos:
-- SQLite: queries rápidas, joins, análisis exploratorio
-- Parquet: almacenamiento eficiente, lectura rápida para ML
-
-Diseño:
-- Append-only (nunca borra, permite análisis histórico)
-- Indexed por timestamp y symbol
-- Schema optimizado para ML pipelines
-"""
-
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import sqlite3
 
 import pandas as pd
 
-
-@dataclass
-class TradeRecord:
-    """Trade individual (market data)."""
-
-    timestamp: float
-    symbol: str
-    price: float
-    qty: float
-    is_buyer_maker: bool
-    run_id: str | None = None
-
-
-@dataclass
-class BarRecord:
-    """Barra OHLCV."""
-
-    timestamp: float
-    symbol: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    trade_count: int
-    dollar_value: float
-    run_id: str | None = None
-
-
-@dataclass
-class FeatureRecord:
-    """Features calculados (indicadores técnicos)."""
-
-    timestamp: float
-    symbol: str
-    feature_name: str
-    feature_value: float
-    run_id: str | None = None
-
-
-@dataclass
-class SignalRecord:
-    """Señal de trading (decisión de estrategia)."""
-
-    timestamp: float
-    symbol: str
-    signal_type: str  # ENTRY, EXIT, STOP_LOSS, TAKE_PROFIT
-    side: str  # BUY, SELL
-    price: float
-    qty: float
-    reason: str
-    metadata: str | None = None  # JSON with extra info
-    run_id: str | None = None
-
-
-@dataclass
-class EquityRecord:
-    """Punto de equity curve."""
-
-    timestamp: float
-    symbol: str
-    price: float
-    position_qty: float
-    cash: float
-    equity: float
-    run_id: str | None = None
+from .records import (
+    BarRecord,
+    EquityRecord,
+    FeatureRecord,
+    SignalRecord,
+    TradeRecord,
+)
 
 
 class DataStorage:
     """
-    Sistema de almacenamiento unificado.
+    Sistema de almacenamiento unificado (SQLite backend).
 
     Uso:
-        storage = DataStorage("data/storage.db")
+        storage = DataStorage("data/trading_data.db")
 
         # Guardar trades
         storage.save_trades([trade1, trade2, ...])
@@ -500,7 +418,6 @@ class DataStorage:
         if df.empty:
             return df
 
-        # Pivot para tener features como columnas
         return df.pivot_table(
             index=["timestamp", "symbol"],
             columns="feature_name",
@@ -526,7 +443,6 @@ class DataStorage:
             cols = [desc[0] for desc in cursor.description]
             data = dict(zip(cols, row, strict=False))
 
-            # Parsear JSON fields
             if data.get("params"):
                 data["params"] = json.loads(data["params"])
             if data.get("summary"):
@@ -537,7 +453,7 @@ class DataStorage:
     def list_runs(self, strategy: str | None = None, limit: int = 50) -> pd.DataFrame:
         """Lista runs disponibles."""
         query = "SELECT * FROM runs WHERE 1=1"
-        params = []
+        params: list[str] = []
 
         if strategy:
             query += " AND strategy = ?"
@@ -567,12 +483,11 @@ class DataStorage:
     def get_stats(self) -> dict:
         """Estadísticas generales de la base de datos."""
         with sqlite3.connect(self.db_path) as conn:
-            stats = {}
+            stats: dict[str, float | int] = {}
             for table in ["trades", "bars", "features", "signals", "equity", "runs"]:
                 cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
                 stats[table] = cursor.fetchone()[0]
 
-            # Tamaño de archivo
             stats["db_size_mb"] = self.db_path.stat().st_size / (1024 * 1024)
 
         return stats

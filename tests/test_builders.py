@@ -94,12 +94,8 @@ def test_run_stream_get_builder():
     import sys
     from pathlib import Path
 
-    # Ensure tools is importable
-    tools_path = Path(__file__).parent.parent / "src" / "tools"
-    if str(tools_path) not in sys.path:
-        sys.path.insert(0, str(tools_path))
-
-    from tools.run_stream import get_builder
+    # Import from new location
+    from tools.live.run_stream import get_builder
 
     # Test tick_count builder
     builder = get_builder("tick_count", {"count": 50})

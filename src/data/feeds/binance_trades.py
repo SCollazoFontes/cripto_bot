@@ -23,7 +23,6 @@ import math
 from typing import Any
 
 import websockets
-from websockets.exceptions import InvalidMessage, InvalidStatusCode
 
 # -------------------------
 # Configuración y constantes
@@ -116,24 +115,18 @@ async def iter_trades(
                 ) as ws:
                     attempt = 0
                     while True:
+                        # Espera con timeout para permitir reconexiones limpias
                         raw = await asyncio.wait_for(ws.recv(), timeout=READ_TIMEOUT_S)
                         if isinstance(raw, (bytes, bytearray)):
                             raw = raw.decode("utf-8", "ignore")
                         yield json.loads(raw)
-            except (InvalidStatusCode, InvalidMessage) as e:
-                code = getattr(e, "status_code", None)
-                raise RuntimeError(f"Handshake/WS inválido (HTTP {code}) en {url}.") from e
-            except (TimeoutError, websockets.ConnectionClosedError):
+            except Exception:
                 attempt += 1
                 sleep_s = min(20, 2 ** min(5, attempt))
                 await asyncio.sleep(sleep_s)
                 continue
-            except Exception:
-                attempt += 1
-                await asyncio.sleep(3)
-                continue
-            finally:
-                await asyncio.sleep(1)
+            # pequeña pausa entre reintentos
+            await asyncio.sleep(0.2)
 
     agen = _consume(url)
 
@@ -155,8 +148,23 @@ async def iter_trades(
     except TimeoutError as exc:
         net = "TESTNET" if testnet else "PROD"
         raise RuntimeError(f"Sin mensajes @trade en {FIRST_MSG_TIMEOUT_S}s ({net}).") from exc
+    except asyncio.CancelledError:
+        # Cierre solicitado por el consumidor
+        pass
 
-    async for msg in agen:
-        tick = _map_trade(msg)
-        if tick is not None:
-            yield tick
+    try:
+        async for msg in agen:
+            tick = _map_trade(msg)
+            if tick is not None:
+                yield tick
+    except asyncio.CancelledError:
+        # Cancelación limpia
+        pass
+    finally:
+        # Asegurar cierre del generador interno
+        try:
+            aclose = getattr(agen, "aclose", None)
+            if callable(aclose):
+                await aclose()
+        except Exception:
+            pass

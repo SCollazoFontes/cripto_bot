@@ -157,13 +157,19 @@ def main() -> None:
     save_manifest(run_dir, args, started_ts)
 
     # Construir params combinados si se especifican flags específicos de estrategia
-    combined_params = {}
+    combined_params: dict = {}
     if args.params:
         try:
-            combined_params.update(json.loads(args.params))
+            parsed = json.loads(args.params)
+            if isinstance(parsed, dict):
+                combined_params.update(parsed)
+            else:
+                print("⚠️  --params debe ser un objeto JSON (dict)")
         except Exception as e:
             print(f"⚠️  Error parseando --params JSON: {e}")
+
     if args.strategy == "vol_breakout":
+        # vol_breakout espera kwargs planos
         if args.vb_lookback is not None:
             combined_params["lookback"] = args.vb_lookback
         if args.vb_atr_period is not None:
@@ -176,21 +182,28 @@ def main() -> None:
             combined_params["qty_frac"] = args.vb_qty_frac
         if args.vb_debug:
             combined_params["debug"] = True
-    if args.strategy == "vwap_reversion":
+
+    elif args.strategy == "vwap_reversion":
+        # vwap_reversion espera un único parámetro 'params' con un dict interno
+        if "params" not in combined_params or not isinstance(combined_params.get("params"), dict):
+            # Si el usuario pasó claves planas, las anidamos automáticamente
+            combined_params = {"params": combined_params if combined_params else {}}
+
+        vr = combined_params["params"]
         if args.vr_vwap_window is not None:
-            combined_params["vwap_window"] = args.vr_vwap_window
+            vr["vwap_window"] = args.vr_vwap_window
         if args.vr_z_entry is not None:
-            combined_params["z_entry"] = args.vr_z_entry
+            vr["z_entry"] = args.vr_z_entry
         if args.vr_z_exit is not None:
-            combined_params["z_exit"] = args.vr_z_exit
+            vr["z_exit"] = args.vr_z_exit
         if args.vr_take_profit_pct is not None:
-            combined_params["take_profit_pct"] = args.vr_take_profit_pct
+            vr["take_profit_pct"] = args.vr_take_profit_pct
         if args.vr_stop_loss_pct is not None:
-            combined_params["stop_loss_pct"] = args.vr_stop_loss_pct
+            vr["stop_loss_pct"] = args.vr_stop_loss_pct
         if args.vr_qty_frac is not None:
-            combined_params["qty_frac"] = args.vr_qty_frac
+            vr["qty_frac"] = args.vr_qty_frac
         if args.vr_warmup is not None:
-            combined_params["warmup"] = args.vr_warmup
+            vr["warmup"] = args.vr_warmup
 
     # Serializar params combinados (o None si vacío)
     params_json = json.dumps(combined_params) if combined_params else None

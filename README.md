@@ -174,6 +174,96 @@ caffeinate -dimsu -t 25200 -- python -m tools.run_live \
 
 ## 🌐 Entorno y Configuración
 
+## 📈 Estrategias Disponibles
+
+| Estrategia        | Archivo                | Propósito Breve                                  |
+|-------------------|------------------------|--------------------------------------------------|
+| `momentum`        | `strategies/momentum.py`      | Momentum simple sobre media reciente             |
+| `momentum_v2`     | `strategies/momentum_v2.py`   | Momentum con filtros (volatilidad, cooldown, SL/TP)|
+| `vol_breakout`    | `strategies/vol_breakout.py`  | Ruptura de canal con ATR y gestión de riesgo     |
+| `vwap_reversion`  | `strategies/vwap_reversion.py`| Reversión a VWAP usando z-score y TP/SL          |
+
+### Parámetros `momentum`
+Ejemplo JSON vía `--params`:
+```json
+{"lookback_ticks": 20, "entry_threshold": 0.0015, "exit_threshold": 0.001, "qty_frac": 0.3}
+```
+
+### Parámetros `momentum_v2`
+```json
+{
+  "lookback_ticks": 20,
+  "entry_threshold": 0.0015,
+  "exit_threshold": 0.001,
+  "qty_frac": 0.3,
+  "stop_loss_pct": 0.008,
+  "take_profit_pct": 0.015,
+  "cooldown_bars": 3,
+  "trend_confirmation": false
+}
+```
+
+### Parámetros `vol_breakout`
+Se pueden pasar por JSON o flags dedicados:
+| Flag | Clave JSON | Descripción | Default interno |
+|------|------------|-------------|-----------------|
+| `--vb-lookback` | `lookback` | Tamaño del canal | 20 |
+| `--vb-atr-period` | `atr_period` | Periodo ATR | 14 |
+| `--vb-atr-mult` | `atr_mult` | Multiplicador ATR para ruptura | 0.5 |
+| `--vb-stop-mult` | `stop_mult` | Multiplicador ATR para stop | 2.0 |
+| `--vb-qty-frac` | `qty_frac` | Fracción de capital | 0.2 |
+| `--vb-debug` | `debug` | Logs detallados | False |
+
+Ejemplo:
+```bash
+python -m tools.live.run_binance \
+  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
+  --symbol BTCUSDT --strategy vol_breakout \
+  --vb-lookback 30 --vb-atr-period 10 --vb-atr-mult 0.7 --vb-stop-mult 1.8 --vb-qty-frac 0.25
+```
+
+### Parámetros `vwap_reversion`
+Flags dedicados:
+| Flag | Clave JSON | Descripción | Default interno |
+|------|------------|-------------|-----------------|
+| `--vr-vwap-window` | `vwap_window` | Ventana VWAP/Z | 50 |
+| `--vr-z-entry` | `z_entry` | Umbral entrada | 1.5 |
+| `--vr-z-exit` | `z_exit` | Umbral salida | 0.5 |
+| `--vr-take-profit-pct` | `take_profit_pct` | Take profit | 0.006 |
+| `--vr-stop-loss-pct` | `stop_loss_pct` | Stop loss | 0.004 |
+| `--vr-qty-frac` | `qty_frac` | Fracción capital | 1.0 |
+| `--vr-warmup` | `warmup` | Barras warmup | = vwap_window |
+
+Ejemplo:
+```bash
+python -m tools.live.run_binance \
+  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
+  --symbol BTCUSDT --strategy vwap_reversion \
+  --vr-vwap-window 40 --vr-z-entry 1.2 --vr-z-exit 0.3 --vr-take-profit-pct 0.008 --vr-stop-loss-pct 0.005 --vr-qty-frac 0.6
+```
+
+### Combinar con `--params`
+Si se pasa `--params` (JSON) y flags específicos, los flags sobrescriben claves del JSON.
+
+### Bar Builder (Composite)
+Recordatorio de flags de micro-velas:
+```bash
+--bar-tick-limit 100       # trades
+--bar-qty-limit 5.0        # BTC acumulados
+--bar-value-limit 50000    # Notional USDT
+--bar-imbal-limit 10.0     # Imbalance (no implementado aún)
+--bar-policy any|all       # Política de cierre
+```
+
+Ejemplo completo con estrategia y builder:
+```bash
+python -m tools.live.run_binance \
+  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
+  --symbol BTCUSDT --cash 12000 --fees-bps 10.0 \
+  --strategy momentum_v2 --params '{"lookback_ticks": 20, "entry_threshold": 0.0015, "exit_threshold": 0.001}' \
+  --bar-tick-limit 100 --bar-value-limit 50000 --bar-policy any
+```
+
 Variables de entorno importantes (`.env`):
 - `PYTHONPATH`: Debe apuntar a `src/`
 - `USE_TESTNET`: True para testnet, False para mainnet

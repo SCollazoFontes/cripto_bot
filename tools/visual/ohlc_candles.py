@@ -111,7 +111,7 @@ def render_ohlc(run_dir: str):
 
     for idx, tf in enumerate(tf_options):
         with cols[idx]:
-            if st.button(tf, key=f"tf_{tf}", use_container_width=True):
+            if st.button(tf, key=f"tf_{tf}"):
                 st.session_state.selected_tf = tf
                 try:
                     st.rerun()

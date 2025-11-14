@@ -10,7 +10,7 @@ import pathlib
 import time
 
 from bars.base import Trade
-from bars.volume_qty import VolumeQtyBarBuilder
+from bars.composite import CompositeBarBuilder
 from brokers.base import OrderRequest
 from brokers.binance_paper import BinancePaperBroker, _ExecCfg
 from core.metrics import calculate_all_metrics
@@ -37,6 +37,11 @@ async def run_live_trading(
     testnet: bool,
     strategy_name: str | None,
     strategy_params: str | None,
+    bar_tick_limit: int | None = None,
+    bar_qty_limit: float | None = None,
+    bar_value_limit: float | None = None,
+    bar_imbal_limit: float | None = None,
+    bar_policy: str = "any",
 ) -> None:
     """
     Ejecuta trading en vivo durante `duration` segundos.
@@ -110,8 +115,33 @@ async def run_live_trading(
 
             traceback.print_exc()
 
-    # Builder de micro-velas (volumen más pequeño para más barras)
-    bar_builder = VolumeQtyBarBuilder(qty_limit=0.05)  # 0.05 BTC por barra (~$4.5k a $90k/BTC)
+    # Configurar Bar Builder
+    # Si no se especifica ningún umbral, usar defaults conservadores
+    if all(x is None for x in [bar_tick_limit, bar_qty_limit, bar_value_limit, bar_imbal_limit]):
+        # Defaults: 100 trades O $50k negociados
+        bar_tick_limit = 100
+        bar_value_limit = 50000.0
+        print("⚙️  Usando configuración de barras por defecto: tick_limit=100, value_limit=$50k")
+
+    bar_builder = CompositeBarBuilder(
+        tick_limit=bar_tick_limit,
+        qty_limit=bar_qty_limit,
+        value_limit=bar_value_limit,
+        imbal_limit=bar_imbal_limit,
+        policy=bar_policy,
+    )
+
+    # Mostrar configuración del builder
+    active_rules = []
+    if bar_tick_limit:
+        active_rules.append(f"tick={bar_tick_limit}")
+    if bar_qty_limit:
+        active_rules.append(f"qty={bar_qty_limit:.2f} BTC")
+    if bar_value_limit:
+        active_rules.append(f"value=${bar_value_limit:,.0f}")
+    if bar_imbal_limit:
+        active_rules.append(f"imbal={bar_imbal_limit:.2f}")
+    print(f"📊 Bar Builder: CompositeBarBuilder({', '.join(active_rules)}, policy='{bar_policy}')")
 
     # Contadores y almacenamiento
     equity_rows: list[tuple] = []
@@ -132,7 +162,20 @@ async def run_live_trading(
         if not data_csv_path.exists():
             with data_csv_path.open("w", newline="") as f:
                 writer = csv.DictWriter(
-                    f, fieldnames=["timestamp", "open", "high", "low", "close", "volume"]
+                    f,
+                    fieldnames=[
+                        "timestamp",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "trade_count",
+                        "dollar_value",
+                        "start_time",
+                        "end_time",
+                        "duration_ms",
+                    ],
                 )
                 writer.writeheader()
     except Exception as e:
@@ -191,6 +234,10 @@ async def run_live_trading(
                     equity_rows.append((bar_ts, symbol, bar_price, pos_qty, cash_now, equity_now))
 
                     # Guardar datos de barra (OHLCV) en memoria y en disco (incremental)
+                    bar_start_ts = bar.start_time.timestamp()
+                    bar_end_ts = bar.end_time.timestamp()
+                    bar_duration_ms = int((bar_end_ts - bar_start_ts) * 1000)
+
                     bar_row = {
                         "timestamp": bar_ts,
                         "open": bar.open,
@@ -198,6 +245,11 @@ async def run_live_trading(
                         "low": bar.low,
                         "close": bar.close,
                         "volume": bar.volume,
+                        "trade_count": bar.trade_count,
+                        "dollar_value": bar.dollar_value if bar.dollar_value else 0.0,
+                        "start_time": bar_start_ts,
+                        "end_time": bar_end_ts,
+                        "duration_ms": bar_duration_ms,
                     }
                     bar_rows.append(bar_row)
                     try:
@@ -211,6 +263,11 @@ async def run_live_trading(
                                     "low",
                                     "close",
                                     "volume",
+                                    "trade_count",
+                                    "dollar_value",
+                                    "start_time",
+                                    "end_time",
+                                    "duration_ms",
                                 ],
                             )
                             writer.writerow(bar_row)

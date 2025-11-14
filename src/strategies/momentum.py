@@ -141,45 +141,9 @@ class MomentumStrategy(Strategy):
 
     # ------------------- coste vs edge ---------------------------------
 
-    def _estimate_cost_abs(self, side: str, price: float, qty: float) -> float:
-        cm = self._cost_model
-        notional = abs(price * qty)
-        if cm is None:
-            # Fallback: asumir fee+slip aproximado 8 bps
-            return notional * 0.0008
-        role = "taker"  # mercado para entries/exits
-        side_norm = "buy" if side.upper() == "BUY" else "sell"
-        try:
-            eff_px = cm.effective_price(base_price=price, side=side_norm, role=role)
-            fee = cm.fee_amount(notional=notional, role=role)
-        except Exception:
-            return notional * 0.0008
-        # Slippage abs = |eff_px - price| * qty
-        slip_abs = abs(eff_px - price) * qty
-        return fee + slip_abs
-
     def _is_profitable(self, side: str, price: float, qty: float, mom: float) -> bool:
-        """Decide si el trade propuesto supera el coste estimado.
-
-        Heurística: edge bruto ≈ |mom| * notional. (mom es desviación relativa).
-        Compara edge_abs vs coste_abs y min_edge_bps.
-
-        TEMPORALMENTE DESACTIVADO: Siempre devuelve True para permitir trades.
-        """
-        # FILTRO DESACTIVADO - Permitir todos los trades
+        """Filtro de rentabilidad desactivado. Siempre permite trades."""
         return True
-
-        # Código original comentado:
-        # if qty <= 0 or price <= 0:
-        #     return False
-        # notional = price * qty
-        # edge_abs = abs(mom) * notional
-        # cost_abs = self._estimate_cost_abs(side, price, qty)
-        # if self.min_edge_bps > 0:
-        #     edge_bps = (edge_abs / notional) * 10_000 if notional > 0 else 0.0
-        #     if edge_bps < self.min_edge_bps:
-        #         return False
-        # return edge_abs > cost_abs
 
     @property
     def cost_model(self) -> CostModel | None:

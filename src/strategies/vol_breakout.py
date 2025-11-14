@@ -13,68 +13,141 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, ClassVar
 
-from brokers.base import OrderRequest, OrderSide
 from strategies.base import PositionState, Strategy, atr_like, register_strategy
 
 
 class VolatilityBreakoutStrategy(Strategy):
-    """Estrategia de breakout de volatilidad."""
+    """Estrategia de breakout de volatilidad.
+
+    Lógica añadida:
+    - Entrada LONG si close supera canal alto + k*ATR.
+    - Entrada SHORT si close cae por debajo canal bajo - k*ATR.
+    - Salida por stop-loss (2*ATR contra la posición) o por reversión de ruptura.
+    """
 
     name: ClassVar[str] = "vol_breakout"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        lookback: int = 20,
+        atr_period: int = 14,
+        atr_mult: float = 0.5,
+        stop_mult: float = 2.0,
+        qty_frac: float = 0.2,
+        debug: bool = False,
+        **_: Any,
+    ) -> None:
         self.position = PositionState()
         self.state: dict[str, Any] = {"atr": 0.0}
-        self.highs: deque[float] = deque(maxlen=20)
-        self.lows: deque[float] = deque(maxlen=20)
-        self.closes: deque[float] = deque(maxlen=20)
+        self.highs: deque[float] = deque(maxlen=lookback)
+        self.lows: deque[float] = deque(maxlen=lookback)
+        self.closes: deque[float] = deque(maxlen=lookback)
+        self.lookback = lookback
+        self.atr_period = atr_period
+        self.atr_mult = float(atr_mult)
+        self.stop_mult = float(stop_mult)
+        self.qty_frac = float(qty_frac)
+        self.debug = bool(debug)
+
+    def _log(self, msg: str) -> None:
+        if self.debug:
+            print(f"[VolBreakout] {msg}")
 
     def on_bar_live(self, broker: Any, executor: Any, symbol: str, bar: dict[str, Any]) -> None:
-        """Procesa barra y ejecuta lógica de trading."""
         high = float(bar.get("high", 0.0))
         low = float(bar.get("low", 0.0))
         close = float(bar.get("close", 0.0))
+
+        # Guardar valores previos para detectar ruptura respecto al canal anterior
+        prev_highs = list(self.highs)
+        prev_lows = list(self.lows)
 
         self.highs.append(high)
         self.lows.append(low)
         self.closes.append(close)
 
-        # Calcular ATR si hay suficientes datos
         atr_val = 0.0
-        if len(self.highs) >= 14:
-            atr_val = atr_like(list(self.highs), list(self.lows), list(self.closes), n=14)
+        if len(self.highs) >= self.atr_period:
+            atr_val = atr_like(
+                list(self.highs), list(self.lows), list(self.closes), n=self.atr_period
+            )
             self.state["atr"] = atr_val
-
-        # Proteger contra None
         atr_val = max(atr_val, 0.0)
-        pos_qty = self.position.qty or 0.0
+
+        ch_high = max(self.highs) if self.highs else high
+        ch_low = min(self.lows) if self.lows else low
+        ch_high_prev = max(prev_highs) if prev_highs else ch_high
+        ch_low_prev = min(prev_lows) if prev_lows else ch_low
+
+        pos_qty = self.position.qty
         entry_px = self.position.entry_price or close
 
-        # Long position: stop loss
-        if pos_qty > 0:
-            stop_loss = entry_px - atr_val * 2
-            if close < stop_loss:
-                _ = OrderRequest(
-                    symbol=symbol,
-                    side=OrderSide.SELL,
-                    qty=pos_qty,
-                    reason="vol_breakout_sl_long",
-                )
+        # Gestión de posición abierta: stop-loss
+        if pos_qty > 0:  # LONG
+            stop_loss = entry_px - self.stop_mult * atr_val
+            if close < stop_loss and pos_qty > 0:
+                self._log(f"SL LONG qty={pos_qty:.6f} close={close:.2f} stop={stop_loss:.2f}")
+                executor.market_sell(symbol, pos_qty)
+                self.position.qty = 0.0
+                self.position.side = None
+                return
+        elif pos_qty < 0:  # SHORT
+            stop_loss = entry_px + self.stop_mult * atr_val
+            if close > stop_loss and pos_qty < 0:
+                self._log(f"SL SHORT qty={abs(pos_qty):.6f} close={close:.2f} stop={stop_loss:.2f}")
+                executor.market_buy(symbol, abs(pos_qty))
+                self.position.qty = 0.0
+                self.position.side = None
+                return
 
-        # Short position: stop loss
-        elif pos_qty < 0:
-            stop_loss = entry_px + atr_val * 2
-            if close > stop_loss:
-                _ = OrderRequest(
-                    symbol=symbol,
-                    side=OrderSide.BUY,
-                    qty=abs(pos_qty),
-                    reason="vol_breakout_sl_short",
-                )
+        # Entrada si no hay posición y hay ruptura
+        if self.position.qty == 0.0 and len(self.closes) == self.closes.maxlen and atr_val > 0.0:
+            # LONG breakout
+            if close > ch_high_prev + self.atr_mult * atr_val:
+                # Calcular tamaño
+                cash = float(getattr(broker, "cash", 0.0))
+                notional = cash * self.qty_frac
+                qty = notional / close if close > 0 else 0.0
+                if qty > 0:
+                    self._log(
+                        f"ENTRY LONG qty={qty:.6f} close={close:.2f} ch_high={ch_high:.2f} atr={atr_val:.2f}"
+                    )
+                    executor.market_buy(symbol, qty)
+                    self.position.qty = qty
+                    self.position.side = "BUY"
+                    self.position.entry_price = close
+                return
+            # SHORT breakout
+            if close < ch_low_prev - self.atr_mult * atr_val:
+                cash = float(getattr(broker, "cash", 0.0))
+                notional = cash * self.qty_frac
+                qty = notional / close if close > 0 else 0.0
+                if qty > 0:
+                    self._log(
+                        f"ENTRY SHORT qty={qty:.6f} close={close:.2f} ch_low={ch_low:.2f} atr={atr_val:.2f}"
+                    )
+                    executor.market_sell(symbol, qty)
+                    self.position.qty = -qty
+                    self.position.side = "SELL"
+                    self.position.entry_price = close
+                return
+
+        # Salida por reversión (precio vuelve dentro del canal tras ruptura reciente)
+        if pos_qty > 0 and close < ch_high:  # Long pierde impulso
+            self._log("EXIT LONG por reversión canal")
+            executor.market_sell(symbol, pos_qty)
+            self.position.qty = 0.0
+            self.position.side = None
+            return
+        if pos_qty < 0 and close > ch_low:  # Short pierde impulso
+            self._log("EXIT SHORT por reversión canal")
+            executor.market_buy(symbol, abs(pos_qty))
+            self.position.qty = 0.0
+            self.position.side = None
+            return
 
 
-# Registro
+# Registro único
 register_strategy("vol_breakout", VolatilityBreakoutStrategy)
-register_strategy("VolatilityBreakoutStrategy", VolatilityBreakoutStrategy)
 
 __all__ = ["VolatilityBreakoutStrategy"]

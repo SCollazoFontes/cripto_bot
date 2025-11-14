@@ -88,6 +88,19 @@ def save_manifest(run_dir: pathlib.Path, args: argparse.Namespace, started_ts: f
         params = json.loads(args.params) if getattr(args, "params", None) else {}
     except Exception:
         params = {}
+
+    # Configuración del Bar Builder
+    bar_builder_config = {}
+    if getattr(args, "bar_tick_limit", None):
+        bar_builder_config["tick_limit"] = args.bar_tick_limit
+    if getattr(args, "bar_qty_limit", None):
+        bar_builder_config["qty_limit"] = args.bar_qty_limit
+    if getattr(args, "bar_value_limit", None):
+        bar_builder_config["value_limit"] = args.bar_value_limit
+    if getattr(args, "bar_imbal_limit", None):
+        bar_builder_config["imbal_limit"] = args.bar_imbal_limit
+    bar_builder_config["policy"] = getattr(args, "bar_policy", "any")
+
     manifest = {
         "run_id": datetime.fromtimestamp(started_ts, tz=UTC).strftime("%Y%m%dT%H%M%SZ"),
         "started_ts": started_ts,
@@ -99,6 +112,7 @@ def save_manifest(run_dir: pathlib.Path, args: argparse.Namespace, started_ts: f
         "slip_bps": getattr(args, "slip_bps", None),
         "strategy": getattr(args, "strategy", None),
         "params": params,
+        "bar_builder": bar_builder_config,
         # Opciones del panel (si existen en args)
         "dashboard": getattr(args, "dashboard", None),
         "panel": getattr(args, "panel", None),

@@ -36,7 +36,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from brokers.base import OrderRequest, OrderSide
+from brokers.base import OrderRequest
 from strategies.base import PositionState, Strategy, register_strategy
 
 
@@ -60,6 +60,7 @@ class VWAPReversionStrategy(Strategy):
         self._sum_p = 0.0
         self._sum_p2 = 0.0
         self._n = 0
+        self.position = PositionState()
 
     # ---- utilidades internas ----
     def _push(self, price: float, vol: float) -> None:
@@ -190,62 +191,69 @@ class VWAPReversionStrategy(Strategy):
         pass
 
     def on_bar_live(self, broker, executor, symbol: str, bar: dict[str, Any]) -> None:
-        # guardia: evitar None en operaciones
-        entry_price = self.position.entry_price or 0.0
         current_price = float(bar.get("close", 0.0))
-
-        if entry_price > 0 and current_price / entry_price - 1 < -0.02:
-            order = OrderRequest(
-                symbol=symbol,
-                side=OrderSide.SELL,
-                qty=self.position.qty,
-                reason="reversion_exit_long",
-            )
-            broker.submit_order(executor, order)
+        vol = float(bar.get("qty") or bar.get("volume") or 1.0)
+        if vol < self.min_vol:
+            vol = 1.0
+        self._push(current_price, vol)
+        self._n += 1
+        if self._n < self.warmup:
             return
-
-        qty_position = self.position.qty if self.position.qty is not None else 0.1
-
         vwap = self._vwap()
         z = self._zscore(current_price)
         if vwap is None or z is None:
             return
 
-        if not self.position.is_open:
+        # Entrada
+        if not self.position.has_position:
+            qty_position = max(0.0, min(1.0, self.qty_frac))
             if z <= -abs(self.z_entry):
-                order = OrderRequest(
-                    symbol=symbol,
-                    side=OrderSide.BUY,
-                    qty=qty_position,
-                    reason="reversion_entry_long",
-                )
-                broker.submit_order(executor, order)
+                executor.market_buy(symbol, qty_position)
+                self.position.side = "LONG"
+                self.position.qty = qty_position
+                self.position.entry_price = current_price
                 return
             if z >= abs(self.z_entry):
-                order = OrderRequest(
-                    symbol=symbol,
-                    side=OrderSide.SELL,
-                    qty=qty_position,
-                    reason="reversion_entry_short",
-                )
-                broker.submit_order(executor, order)
-                return
-        else:
-            if abs(z) <= abs(self.z_exit):
-                order = OrderRequest(
-                    symbol=symbol,
-                    side=OrderSide.BUY,
-                    qty=self.position.qty,
-                    reason="reversion_exit_short",
-                )
-                broker.submit_order(executor, order)
+                executor.market_sell(symbol, qty_position)
+                self.position.side = "SHORT"
+                self.position.qty = qty_position
+                self.position.entry_price = current_price
                 return
 
-        # Fallback en caso de error
-        order = OrderRequest(
-            symbol=str(symbol) if symbol else "UNKNOWN",
-            side=OrderSide.SELL,
-            qty=0.1,
-            reason="reversion_fallback",
-        )
-        broker.submit_order(executor, order)
+        # Salidas (Take-profit / Stop-loss / Reversión banda)
+        if (
+            self.position.has_position
+            and self.position.entry_price
+            and self.position.entry_price > 0
+        ):
+            pnl_pct = (current_price - self.position.entry_price) / self.position.entry_price
+            if self.position.side == "SHORT":
+                pnl_pct = -pnl_pct
+
+            # TP
+            if pnl_pct >= self.take_profit_pct:
+                if self.position.side == "LONG":
+                    executor.market_sell(symbol, self.position.qty)
+                else:
+                    executor.market_buy(symbol, self.position.qty)
+                self.position.qty = 0.0
+                self.position.side = None
+                return
+            # SL
+            if pnl_pct <= -self.stop_loss_pct:
+                if self.position.side == "LONG":
+                    executor.market_sell(symbol, self.position.qty)
+                else:
+                    executor.market_buy(symbol, self.position.qty)
+                self.position.qty = 0.0
+                self.position.side = None
+                return
+
+        # Cierre por vuelta a banda
+        if self.position.has_position and abs(z) <= abs(self.z_exit):
+            if self.position.side == "LONG":
+                executor.market_sell(symbol, self.position.qty)
+            else:
+                executor.market_buy(symbol, self.position.qty)
+            self.position.qty = 0.0
+            self.position.side = None

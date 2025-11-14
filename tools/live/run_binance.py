@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import pathlib
 import time
 
@@ -46,6 +47,45 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--strategy", default=None, help="Nombre de estrategia (ej: momentum)")
     p.add_argument("--params", default=None, help="Parámetros de estrategia en JSON")
+    # Parámetros específicos vol_breakout
+    p.add_argument(
+        "--vb-lookback", type=int, default=None, help="vol_breakout: tamaño canal (lookback)"
+    )
+    p.add_argument("--vb-atr-period", type=int, default=None, help="vol_breakout: periodo ATR")
+    p.add_argument(
+        "--vb-atr-mult",
+        type=float,
+        default=None,
+        help="vol_breakout: multiplicador ATR para ruptura",
+    )
+    p.add_argument(
+        "--vb-stop-mult", type=float, default=None, help="vol_breakout: multiplicador ATR para stop"
+    )
+    p.add_argument(
+        "--vb-qty-frac",
+        type=float,
+        default=None,
+        help="vol_breakout: fracción de capital por trade",
+    )
+    p.add_argument("--vb-debug", action="store_true", help="vol_breakout: activar logs debug")
+    # Parámetros específicos vwap_reversion
+    p.add_argument(
+        "--vr-vwap-window", type=int, default=None, help="vwap_reversion: ventana VWAP/Z-score"
+    )
+    p.add_argument(
+        "--vr-z-entry", type=float, default=None, help="vwap_reversion: umbral entrada z"
+    )
+    p.add_argument("--vr-z-exit", type=float, default=None, help="vwap_reversion: umbral salida z")
+    p.add_argument(
+        "--vr-take-profit-pct", type=float, default=None, help="vwap_reversion: take profit %"
+    )
+    p.add_argument(
+        "--vr-stop-loss-pct", type=float, default=None, help="vwap_reversion: stop loss %"
+    )
+    p.add_argument(
+        "--vr-qty-frac", type=float, default=None, help="vwap_reversion: fracción capital"
+    )
+    p.add_argument("--vr-warmup", type=int, default=None, help="vwap_reversion: barras warmup")
     # Opciones del dashboard
     p.add_argument(
         "--no-dashboard",
@@ -68,6 +108,37 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--dashboard-port", type=int, default=8501, help="Puerto del dashboard Streamlit"
     )
+    # Opciones de Bar Builder
+    p.add_argument(
+        "--bar-tick-limit",
+        type=int,
+        default=None,
+        help="Número de trades por barra (ej: 100)",
+    )
+    p.add_argument(
+        "--bar-qty-limit",
+        type=float,
+        default=None,
+        help="Volumen BTC acumulado por barra (ej: 5.0)",
+    )
+    p.add_argument(
+        "--bar-value-limit",
+        type=float,
+        default=None,
+        help="Valor USDT negociado por barra (ej: 50000.0)",
+    )
+    p.add_argument(
+        "--bar-imbal-limit",
+        type=float,
+        default=None,
+        help="Desequilibrio compra/venta por barra (ej: 10.0)",
+    )
+    p.add_argument(
+        "--bar-policy",
+        choices=["any", "all"],
+        default="any",
+        help="Política de cierre: 'any' (OR) cierra cuando cualquier umbral se alcanza, 'all' (AND) cuando todos",
+    )
     return p.parse_args()
 
 
@@ -85,6 +156,45 @@ def main() -> None:
     started_ts = time.time()
     save_manifest(run_dir, args, started_ts)
 
+    # Construir params combinados si se especifican flags específicos de estrategia
+    combined_params = {}
+    if args.params:
+        try:
+            combined_params.update(json.loads(args.params))
+        except Exception as e:
+            print(f"⚠️  Error parseando --params JSON: {e}")
+    if args.strategy == "vol_breakout":
+        if args.vb_lookback is not None:
+            combined_params["lookback"] = args.vb_lookback
+        if args.vb_atr_period is not None:
+            combined_params["atr_period"] = args.vb_atr_period
+        if args.vb_atr_mult is not None:
+            combined_params["atr_mult"] = args.vb_atr_mult
+        if args.vb_stop_mult is not None:
+            combined_params["stop_mult"] = args.vb_stop_mult
+        if args.vb_qty_frac is not None:
+            combined_params["qty_frac"] = args.vb_qty_frac
+        if args.vb_debug:
+            combined_params["debug"] = True
+    if args.strategy == "vwap_reversion":
+        if args.vr_vwap_window is not None:
+            combined_params["vwap_window"] = args.vr_vwap_window
+        if args.vr_z_entry is not None:
+            combined_params["z_entry"] = args.vr_z_entry
+        if args.vr_z_exit is not None:
+            combined_params["z_exit"] = args.vr_z_exit
+        if args.vr_take_profit_pct is not None:
+            combined_params["take_profit_pct"] = args.vr_take_profit_pct
+        if args.vr_stop_loss_pct is not None:
+            combined_params["stop_loss_pct"] = args.vr_stop_loss_pct
+        if args.vr_qty_frac is not None:
+            combined_params["qty_frac"] = args.vr_qty_frac
+        if args.vr_warmup is not None:
+            combined_params["warmup"] = args.vr_warmup
+
+    # Serializar params combinados (o None si vacío)
+    params_json = json.dumps(combined_params) if combined_params else None
+
     try:
         asyncio.run(
             run_live_trading(
@@ -96,7 +206,12 @@ def main() -> None:
                 slip_bps=args.slip_bps,
                 testnet=args.testnet,
                 strategy_name=args.strategy,
-                strategy_params=args.params,
+                strategy_params=params_json,
+                bar_tick_limit=args.bar_tick_limit,
+                bar_qty_limit=args.bar_qty_limit,
+                bar_value_limit=args.bar_value_limit,
+                bar_imbal_limit=args.bar_imbal_limit,
+                bar_policy=args.bar_policy,
             )
         )
     finally:

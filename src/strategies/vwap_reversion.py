@@ -50,6 +50,7 @@ class VWAPReversionStrategy(Strategy):
         take_profit_pct: float = 0.006,
         stop_loss_pct: float = 0.004,
         qty_frac: float = 1.0,
+        risk_pct: float | None = None,
         min_vol: float = 1e-12,
         warmup: int | None = None,
         debug: bool = False,
@@ -73,7 +74,9 @@ class VWAPReversionStrategy(Strategy):
         self.z_exit: float = float(z_exit)
         self.take_profit_pct: float = float(take_profit_pct)
         self.stop_loss_pct: float = float(stop_loss_pct)
+        # Tamaño histórico (compat) y riesgo porcentual basado en equity (nuevo)
         self.qty_frac: float = float(qty_frac)
+        self.risk_pct: float | None = float(risk_pct) if risk_pct is not None else None
         self.min_vol: float = float(min_vol)
         self.warmup: int = int(warmup if warmup is not None else self.vwap_window)
         self.debug: bool = bool(debug)
@@ -182,6 +185,7 @@ class VWAPReversionStrategy(Strategy):
             return None
 
         if not state.has_position:
+            # Para backtests: qty_frac sigue representando fracción 0..1 (compatibilidad)
             if z <= -abs(self.z_entry):
                 return OrderRequest(
                     decision="OPEN_LONG",
@@ -246,7 +250,18 @@ class VWAPReversionStrategy(Strategy):
 
         # Entrada
         if not self.position.has_position:
+            # Sizing live: usar risk_pct si está definido (porcentaje del equity)
             qty_position = max(0.0, min(1.0, self.qty_frac))
+            if self.risk_pct is not None and hasattr(broker, "cash"):
+                try:
+                    cash = float(broker.cash)
+                    if current_price > 0:
+                        qty_risk = (cash * self.risk_pct) / current_price
+                        # Evitar tamaños excesivos por error numérico
+                        if qty_risk > 0:
+                            qty_position = min(qty_risk, cash / current_price)
+                except Exception:
+                    pass
             if z <= -abs(self.z_entry):
                 self._log(
                     f"ENTRY LONG @ ${current_price:.2f} (z={z:.2f} <= {-abs(self.z_entry):.2f})"

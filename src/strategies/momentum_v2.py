@@ -70,8 +70,24 @@ class MomentumV2Strategy(Strategy):
         trend_confirmation: bool = True,
         debug: bool = False,
         cost_model: CostModel | None = None,
-        **_: Any,
+        **kwargs: Any,
     ) -> None:
+        # Soporte de compatibilidad: permitir `params={...}` además de kwargs directos
+        params = kwargs.get("params")
+        if isinstance(params, dict):
+            lookback_ticks = int(params.get("lookback_ticks", lookback_ticks))
+            entry_threshold = float(params.get("entry_threshold", entry_threshold))
+            exit_threshold = float(params.get("exit_threshold", exit_threshold))
+            qty_frac = float(params.get("qty_frac", qty_frac))
+            stop_loss_pct = float(params.get("stop_loss_pct", stop_loss_pct))
+            take_profit_pct = float(params.get("take_profit_pct", take_profit_pct))
+            volatility_window = int(params.get("volatility_window", volatility_window))
+            min_volatility = float(params.get("min_volatility", min_volatility))
+            max_volatility = float(params.get("max_volatility", max_volatility))
+            cooldown_bars = int(params.get("cooldown_bars", cooldown_bars))
+            trend_confirmation = bool(params.get("trend_confirmation", trend_confirmation))
+            debug = bool(params.get("debug", debug))
+
         # Parámetros core
         self.lookback_ticks = int(lookback_ticks)
         self.entry_threshold = float(entry_threshold)

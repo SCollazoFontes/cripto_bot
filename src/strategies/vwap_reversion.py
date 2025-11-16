@@ -65,6 +65,7 @@ class VWAPReversionStrategy(Strategy):
             take_profit_pct = float(params.get("take_profit_pct", take_profit_pct))
             stop_loss_pct = float(params.get("stop_loss_pct", stop_loss_pct))
             qty_frac = float(params.get("qty_frac", qty_frac))
+            risk_pct = params.get("risk_pct", risk_pct)
             min_vol = float(params.get("min_vol", min_vol))
             warmup = int(params.get("warmup", warmup if warmup is not None else vwap_window))
 

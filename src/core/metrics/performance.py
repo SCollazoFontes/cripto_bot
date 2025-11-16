@@ -52,8 +52,9 @@ def calculate_sortino(returns: list[float], risk_free_rate: float = 0.0) -> floa
     if not downside_returns:
         return float("inf") if mean_return > 0 else 0.0
     downside_mean = sum(downside_returns) / len(downside_returns)
-    downside_variance = sum((r - downside_mean) ** 2 for r in downside_returns) / (
-        len(downside_returns) - 1
+    # Use population variance to avoid zero-division when only one downside return
+    downside_variance = sum((r - downside_mean) ** 2 for r in downside_returns) / len(
+        downside_returns
     )
     downside_std = downside_variance**0.5
     if downside_std == 0:

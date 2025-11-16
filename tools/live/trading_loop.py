@@ -10,11 +10,11 @@ import pathlib
 import time
 
 from bars.base import Trade
-from bars.composite import CompositeBarBuilder
+from bars.builders import CompositeBarBuilder, TimeBarBuilder
 from brokers.base import OrderRequest
 from brokers.binance_paper import BinancePaperBroker, _ExecCfg
 from core.metrics import calculate_all_metrics
-from core.spread_tracker import SpreadTracker
+from core.monitoring import SpreadTracker
 from data.feeds.binance_trades import iter_trades
 from strategies.base import get_strategy_class
 from tools.live.executor import SimpleExecutor
@@ -41,7 +41,9 @@ async def run_live_trading(
     bar_qty_limit: float | None = None,
     bar_value_limit: float | None = None,
     bar_imbal_limit: float | None = None,
+    bar_imbal_mode: str = "qty",
     bar_policy: str = "any",
+    bar_flush_interval: int = 20,
 ) -> None:
     """
     Ejecuta trading en vivo durante `duration` segundos.
@@ -75,6 +77,10 @@ async def run_live_trading(
     broker = BinancePaperBroker(exec_cfg=exec_cfg)
     # Configurar cash inicial manualmente
     broker._usdt = cash
+
+    # Exponer propiedades que las estrategias esperan (evitar patch inside loop)
+    type(broker).cash = property(lambda self: self._usdt)  # type: ignore
+    type(broker).position_qty = property(lambda self: self.get_position(symbol))  # type: ignore
 
     # Función helper para actualizar slippage dinámicamente
     def get_dynamic_slip_pct() -> float:
@@ -115,7 +121,7 @@ async def run_live_trading(
 
             traceback.print_exc()
 
-    # Configurar Bar Builder
+    # Configurar Bar Builders
     # Si no se especifica ningún umbral, usar defaults conservadores
     if all(x is None for x in [bar_tick_limit, bar_qty_limit, bar_value_limit, bar_imbal_limit]):
         # Defaults: 100 trades O $50k negociados
@@ -123,13 +129,20 @@ async def run_live_trading(
         bar_value_limit = 50000.0
         print("⚙️  Usando configuración de barras por defecto: tick_limit=100, value_limit=$50k")
 
+    # Builder para ESTRATEGIA (micro-velas)
     bar_builder = CompositeBarBuilder(
         tick_limit=bar_tick_limit,
         qty_limit=bar_qty_limit,
         value_limit=bar_value_limit,
         imbal_limit=bar_imbal_limit,
+        imbal_mode="tick" if str(bar_imbal_mode).lower() == "tick" else "qty",
         policy=bar_policy,
     )
+
+    # Builder para GRÁFICO (barras de tiempo fijas desde trades brutos)
+    chart_builder = TimeBarBuilder(period_ms=1000)  # 1s fijo
+
+    # El dashboard reagrupa data.csv a timeframes fijos; no necesitamos builder extra aquí.
 
     # Mostrar configuración del builder
     active_rules = []
@@ -145,7 +158,12 @@ async def run_live_trading(
 
     # Contadores y almacenamiento
     equity_rows: list[tuple] = []
-    bar_rows: list[dict] = []  # Para data.csv con OHLCV (también se escribe incrementalmente)
+    # Buffers de escritura
+    bar_rows: list[dict] = []  # Micro-velas (estrategia) → data.csv
+    chart_rows: list[dict] = []  # Barras de tiempo (gráfico) → chart.csv
+    _last_flushed: int = 0
+    _chart_last_flushed: int = 0
+    _FLUSH_INTERVAL = int(bar_flush_interval)  # número de barras entre flush a disco
     trade_rows: list[dict] = []
     decisions_rows: list[dict] = []
 
@@ -158,6 +176,9 @@ async def run_live_trading(
 
     # Preparar archivo de velas incremental
     data_csv_path = run_dir / "data.csv"
+    chart_csv_path = run_dir / "chart.csv"  # Barras de tiempo para gráfico
+    equity_csv_path = run_dir / "equity.csv"
+    trades_csv_path = run_dir / "trades.csv"
     try:
         if not data_csv_path.exists():
             with data_csv_path.open("w", newline="") as f:
@@ -178,6 +199,38 @@ async def run_live_trading(
                     ],
                 )
                 writer.writeheader()
+        # Inicializar chart.csv (barras de tiempo fijas para gráfico)
+        if not chart_csv_path.exists():
+            with chart_csv_path.open("w", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "timestamp",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "trade_count",
+                        "dollar_value",
+                        "start_time",
+                        "end_time",
+                        "duration_ms",
+                    ],
+                )
+                writer.writeheader()
+        # Inicializar equity.csv si no existe (para escritura incremental)
+        if not equity_csv_path.exists():
+            with equity_csv_path.open("w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["timestamp", "symbol", "price", "qty", "cash", "equity"])
+        # Inicializar trades.csv si no existe (para escritura incremental)
+        if not trades_csv_path.exists():
+            with trades_csv_path.open("w", newline="") as f:
+                w = csv.DictWriter(
+                    f, fieldnames=["timestamp", "side", "price", "qty", "cash", "equity", "reason"]
+                )
+                w.writeheader()
     except Exception as e:
         print(f"⚠️  No se pudo inicializar data.csv: {e}")
     print(f"   Símbolo: {symbol}")
@@ -217,7 +270,58 @@ async def run_live_trading(
                     timestamp=datetime.fromtimestamp(t, tz=UTC),
                     is_buyer_maker=is_buyer_maker,
                 )
+                # Actualizar builder de estrategia
                 bar = bar_builder.update(trade_obj)
+
+                # Actualizar builder de gráfico (tiempo fijo)
+                chart_bar = chart_builder.update(trade_obj)
+
+                # Si se cerró una barra de tiempo, escribirla a chart.csv
+                if chart_bar:
+                    chart_start_ts = chart_bar.start_time.timestamp()
+                    chart_end_ts = chart_bar.end_time.timestamp()
+                    chart_duration_ms = int((chart_end_ts - chart_start_ts) * 1000)
+                    chart_row = {
+                        "timestamp": chart_end_ts,
+                        "open": chart_bar.open,
+                        "high": chart_bar.high,
+                        "low": chart_bar.low,
+                        "close": chart_bar.close,
+                        "volume": chart_bar.volume,
+                        "trade_count": chart_bar.trade_count,
+                        "dollar_value": chart_bar.dollar_value if chart_bar.dollar_value else 0.0,
+                        "start_time": chart_start_ts,
+                        "end_time": chart_end_ts,
+                        "duration_ms": chart_duration_ms,
+                    }
+                    chart_rows.append(chart_row)
+                    # Flush inmediato para el dashboard
+                    pending_chart = len(chart_rows) - _chart_last_flushed
+                    if pending_chart >= 1:  # Escribir cada barra inmediatamente
+                        try:
+                            with chart_csv_path.open("a", newline="") as f:
+                                writer = csv.DictWriter(
+                                    f,
+                                    fieldnames=[
+                                        "timestamp",
+                                        "open",
+                                        "high",
+                                        "low",
+                                        "close",
+                                        "volume",
+                                        "trade_count",
+                                        "dollar_value",
+                                        "start_time",
+                                        "end_time",
+                                        "duration_ms",
+                                    ],
+                                )
+                                for row in chart_rows[_chart_last_flushed:]:
+                                    writer.writerow(row)
+                            _chart_last_flushed = len(chart_rows)
+                        except Exception as e:
+                            if len(chart_rows) <= 5:
+                                print(f"⚠️  Error escritura chart.csv: {e}")
 
                 # Si se completó una barra, tomar decisión
                 if bar:
@@ -232,6 +336,13 @@ async def run_live_trading(
 
                     # Guardar equity
                     equity_rows.append((bar_ts, symbol, bar_price, pos_qty, cash_now, equity_now))
+                    # Escribir equity incrementalmente para el dashboard
+                    try:
+                        with equity_csv_path.open("a", newline="") as f:
+                            w = csv.writer(f)
+                            w.writerow((bar_ts, symbol, bar_price, pos_qty, cash_now, equity_now))
+                    except Exception:
+                        pass
 
                     # Guardar datos de barra (OHLCV) en memoria y en disco (incremental)
                     bar_start_ts = bar.start_time.timestamp()
@@ -252,29 +363,33 @@ async def run_live_trading(
                         "duration_ms": bar_duration_ms,
                     }
                     bar_rows.append(bar_row)
-                    try:
-                        with data_csv_path.open("a", newline="") as f:
-                            writer = csv.DictWriter(
-                                f,
-                                fieldnames=[
-                                    "timestamp",
-                                    "open",
-                                    "high",
-                                    "low",
-                                    "close",
-                                    "volume",
-                                    "trade_count",
-                                    "dollar_value",
-                                    "start_time",
-                                    "end_time",
-                                    "duration_ms",
-                                ],
-                            )
-                            writer.writerow(bar_row)
-                    except Exception as e:
-                        # No detener ejecución por problema de escritura de archivo
-                        if bars_emitted <= 3:
-                            print(f"⚠️  No se pudo escribir en data.csv: {e}")
+                    # Flush por lotes para reducir I/O
+                    pending = len(bar_rows) - _last_flushed
+                    if pending >= _FLUSH_INTERVAL:
+                        try:
+                            with data_csv_path.open("a", newline="") as f:
+                                writer = csv.DictWriter(
+                                    f,
+                                    fieldnames=[
+                                        "timestamp",
+                                        "open",
+                                        "high",
+                                        "low",
+                                        "close",
+                                        "volume",
+                                        "trade_count",
+                                        "dollar_value",
+                                        "start_time",
+                                        "end_time",
+                                        "duration_ms",
+                                    ],
+                                )
+                                for row in bar_rows[_last_flushed:]:
+                                    writer.writerow(row)
+                            _last_flushed = len(bar_rows)
+                        except Exception as e:
+                            if bars_emitted <= _FLUSH_INTERVAL:
+                                print(f"⚠️  Error escritura batch data.csv: {e}")
 
                     # Ejecutar estrategia
                     if strategy:
@@ -288,10 +403,7 @@ async def run_live_trading(
                             "volume": bar.volume,
                         }
 
-                        # CRÍTICO: Añadir propiedades que la estrategia espera en el broker
-                        # como atributos directos (no solo asignación)
-                        type(broker).cash = property(lambda self: self._usdt)
-                        type(broker).position_qty = property(lambda self: self.get_position(symbol))
+                        # Propiedades ya expuestas fuera del loop
 
                         # Llamar a la estrategia
                         try:
@@ -315,6 +427,34 @@ async def run_live_trading(
                                         "reason": "strategy",
                                     }
                                 )
+                                # Escribir trade incrementalmente para el dashboard
+                                try:
+                                    with trades_csv_path.open("a", newline="") as f:
+                                        w = csv.DictWriter(
+                                            f,
+                                            fieldnames=[
+                                                "timestamp",
+                                                "side",
+                                                "price",
+                                                "qty",
+                                                "cash",
+                                                "equity",
+                                                "reason",
+                                            ],
+                                        )
+                                        w.writerow(
+                                            {
+                                                "timestamp": bar_ts,
+                                                "side": trade_info["side"],
+                                                "price": trade_info["price"],
+                                                "qty": trade_info["qty"],
+                                                "cash": cash_after,
+                                                "equity": equity_after,
+                                                "reason": "strategy",
+                                            }
+                                        )
+                                except Exception:
+                                    pass
                                 # Mensaje mínimo de decisión de trade en terminal
                                 side_txt = "COMPRA" if trade_info["side"] == "BUY" else "VENTA"
                                 try:
@@ -367,17 +507,35 @@ async def run_live_trading(
                     final_cash = broker._usdt
                     final_pos_qty = broker.get_position(symbol)
                     final_equity = final_cash + (final_pos_qty * last_price)
-                    trade_rows.append(
-                        {
-                            "timestamp": time.time(),
-                            "side": side,
-                            "price": order.fills[0].price if order.fills else last_price,
-                            "qty": order.filled_qty,
-                            "cash": final_cash,
-                            "equity": final_equity,
-                            "reason": "close_position_end",
-                        }
-                    )
+                    last_ts = time.time()
+                    trade_record = {
+                        "timestamp": last_ts,
+                        "side": side,
+                        "price": order.fills[0].price if order.fills else last_price,
+                        "qty": order.filled_qty,
+                        "cash": final_cash,
+                        "equity": final_equity,
+                        "reason": "close_position_end",
+                    }
+                    trade_rows.append(trade_record)
+                    # Escribir también incrementalmente el cierre
+                    try:
+                        with trades_csv_path.open("a", newline="") as f:
+                            w = csv.DictWriter(
+                                f,
+                                fieldnames=[
+                                    "timestamp",
+                                    "side",
+                                    "price",
+                                    "qty",
+                                    "cash",
+                                    "equity",
+                                    "reason",
+                                ],
+                            )
+                            w.writerow(trade_record)
+                    except Exception:
+                        pass
                     # Mensaje de decisión final
                     side_txt = "COMPRA" if side == "BUY" else "VENTA"
                     px = order.fills[0].price if getattr(order, "fills", None) else last_price
@@ -390,6 +548,31 @@ async def run_live_trading(
             spread_tracker.stop()
 
         # Guardar resultados
+        # Flush final de barras pendientes
+        remaining = len(bar_rows) - _last_flushed
+        if remaining > 0:
+            try:
+                with data_csv_path.open("a", newline="") as f:
+                    writer = csv.DictWriter(
+                        f,
+                        fieldnames=[
+                            "timestamp",
+                            "open",
+                            "high",
+                            "low",
+                            "close",
+                            "volume",
+                            "trade_count",
+                            "dollar_value",
+                            "start_time",
+                            "end_time",
+                            "duration_ms",
+                        ],
+                    )
+                    for row in bar_rows[_last_flushed:]:
+                        writer.writerow(row)
+            except Exception as e:
+                print(f"⚠️  Error flush final data.csv: {e}")
         final_cash = broker._usdt
         final_pos_qty = broker.get_position(symbol)
         final_equity = final_cash + (final_pos_qty * last_price)

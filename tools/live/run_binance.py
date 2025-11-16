@@ -21,12 +21,23 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import pathlib
+import sys
 import time
 
 from tools.live.dashboard_launcher import launch_dashboard, should_launch_dashboard
 from tools.live.output_writers import save_manifest
 from tools.live.trading_loop import run_live_trading
+
+# Asegurar que el registro de estrategias se cargue (auto-discovery)
+try:
+    # Si 'src' no está en sys.path (entorno fuera de activate.sh), lo añadimos.
+    if not any(p.endswith("/src") for p in sys.path):
+        sys.path.append(os.path.join(os.getcwd(), "src"))
+    import strategies  # noqa: F401
+except Exception as _e:
+    print(f"⚠️  No se pudo auto-cargar estrategias: {_e}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -134,10 +145,22 @@ def parse_args() -> argparse.Namespace:
         help="Desequilibrio compra/venta por barra (ej: 10.0)",
     )
     p.add_argument(
+        "--bar-imbal-mode",
+        choices=["qty", "tick"],
+        default=None,
+        help="Modo de desequilibrio: 'qty' (∑qty con signo) o 'tick' (∑1 con signo)",
+    )
+    p.add_argument(
         "--bar-policy",
         choices=["any", "all"],
         default="any",
         help="Política de cierre: 'any' (OR) cierra cuando cualquier umbral se alcanza, 'all' (AND) cuando todos",
+    )
+    p.add_argument(
+        "--bar-flush-interval",
+        type=int,
+        default=None,
+        help="Cada cuántas barras se vuelca data.csv al disco (por defecto 20; si dashboard=yes, 1)",
     )
     return p.parse_args()
 
@@ -209,6 +232,13 @@ def main() -> None:
     params_json = json.dumps(combined_params) if combined_params else None
 
     try:
+        # Ajuste de flush para el dashboard: si está activo y no se indicó, forzar 1
+        flush_interval = (
+            args.bar_flush_interval if getattr(args, "bar_flush_interval", None) else None
+        )
+        if dashboard_proc is not None and (flush_interval is None or flush_interval <= 0):
+            flush_interval = 1
+
         asyncio.run(
             run_live_trading(
                 symbol=args.symbol,
@@ -224,7 +254,9 @@ def main() -> None:
                 bar_qty_limit=args.bar_qty_limit,
                 bar_value_limit=args.bar_value_limit,
                 bar_imbal_limit=args.bar_imbal_limit,
+                bar_imbal_mode=(args.bar_imbal_mode or "qty"),
                 bar_policy=args.bar_policy,
+                bar_flush_interval=int(flush_interval) if flush_interval is not None else 20,
             )
         )
     finally:

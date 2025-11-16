@@ -4,10 +4,11 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from core.costs import CostModel
+from core.execution.costs import CostModel
 from strategies.base import (
     Strategy,
     register_strategy,
+    will_exit_non_negative,
 )
 
 
@@ -48,6 +49,7 @@ class MomentumStrategy(Strategy):
         self._win: deque[float] = deque(maxlen=self.lookback_ticks)
         self._in_pos: bool = False  # estado interno simple, opcional
         self._pos_qty: float = 0.0  # tracking opcional (el portfolio real lo lleva el broker)
+        self._entry_price: float | None = None
 
     # -------------------------- utilidades internas -------------------------
 
@@ -107,6 +109,7 @@ class MomentumStrategy(Strategy):
                     executor.market_buy(symbol, qty)
                     self._in_pos = True
                     self._pos_qty = qty  # tracking opcional
+                    self._entry_price = price
                 else:
                     self._log("SKIP ENTRY por coste >= edge")
 
@@ -116,13 +119,21 @@ class MomentumStrategy(Strategy):
         if self._in_pos and (mom < -self.exit_threshold):
             qty_to_close = current_qty if current_qty > 0.0 else self._pos_qty
             if qty_to_close > 0.0:
-                if self._is_profitable(side="SELL", price=price, qty=qty_to_close, mom=-mom):
+                # Salida solo si no realiza pérdida neta tras costes
+                if will_exit_non_negative(
+                    broker,
+                    entry_side="LONG",
+                    entry_price=self._entry_price,
+                    current_price=price,
+                    qty=qty_to_close,
+                ) and self._is_profitable(side="SELL", price=price, qty=qty_to_close, mom=-mom):
                     self._log(f"EXIT {symbol} qty={qty_to_close:.6f}")
                     executor.market_sell(symbol, qty_to_close)
                 else:
-                    self._log("SKIP EXIT por coste >= edge")
+                    self._log("SKIP EXIT por coste (no rentable neto)")
             self._in_pos = False
             self._pos_qty = 0.0
+            self._entry_price = None
             return
 
         # Si no hay acción, terminamos silenciosamente

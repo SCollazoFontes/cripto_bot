@@ -37,22 +37,48 @@ from collections import deque
 from typing import Any
 
 from brokers.base import OrderRequest
-from strategies.base import PositionState, Strategy, register_strategy
+from strategies.base import PositionState, Strategy, register_strategy, will_exit_non_negative
 
 
 @register_strategy("vwap_reversion")
 class VWAPReversionStrategy(Strategy):
-    def __init__(self, params: dict | None = None):
-        p = params or {}
-        self.vwap_window: int = int(p.get("vwap_window", 50))
-        self.z_entry: float = float(p.get("z_entry", 1.5))
-        self.z_exit: float = float(p.get("z_exit", 0.5))
-        self.take_profit_pct: float = float(p.get("take_profit_pct", 0.006))
-        self.stop_loss_pct: float = float(p.get("stop_loss_pct", 0.004))
-        self.qty_frac: float = float(p.get("qty_frac", 1.0))
-        self.min_vol: float = float(p.get("min_vol", 1e-12))
-        self.warmup: int = int(p.get("warmup", self.vwap_window))
+    def __init__(
+        self,
+        vwap_window: int = 50,
+        z_entry: float = 1.5,
+        z_exit: float = 0.5,
+        take_profit_pct: float = 0.006,
+        stop_loss_pct: float = 0.004,
+        qty_frac: float = 1.0,
+        min_vol: float = 1e-12,
+        warmup: int | None = None,
+        debug: bool = False,
+        **kwargs: Any,
+    ):
+        # Soporte de compatibilidad: permitir `params={...}` además de kwargs directos
+        params = kwargs.get("params")
+        if isinstance(params, dict):
+            vwap_window = int(params.get("vwap_window", vwap_window))
+            z_entry = float(params.get("z_entry", z_entry))
+            z_exit = float(params.get("z_exit", z_exit))
+            take_profit_pct = float(params.get("take_profit_pct", take_profit_pct))
+            stop_loss_pct = float(params.get("stop_loss_pct", stop_loss_pct))
+            qty_frac = float(params.get("qty_frac", qty_frac))
+            min_vol = float(params.get("min_vol", min_vol))
+            warmup = int(params.get("warmup", warmup if warmup is not None else vwap_window))
 
+        # Asignar atributos finales tras fusionar configs
+        self.vwap_window: int = int(vwap_window)
+        self.z_entry: float = float(z_entry)
+        self.z_exit: float = float(z_exit)
+        self.take_profit_pct: float = float(take_profit_pct)
+        self.stop_loss_pct: float = float(stop_loss_pct)
+        self.qty_frac: float = float(qty_frac)
+        self.min_vol: float = float(min_vol)
+        self.warmup: int = int(warmup if warmup is not None else self.vwap_window)
+        self.debug: bool = bool(debug)
+
+        # Inicializar buffers usando el vwap_window definitivo
         self._prices: deque[float] = deque(maxlen=self.vwap_window)
         self._vols: deque[float] = deque(maxlen=self.vwap_window)
         self._sum_pv = 0.0
@@ -63,6 +89,10 @@ class VWAPReversionStrategy(Strategy):
         self.position = PositionState()
 
     # ---- utilidades internas ----
+    def _log(self, msg: str) -> None:
+        if self.debug:
+            print(f"[VWAPReversion] {msg}")
+
     def _push(self, price: float, vol: float) -> None:
         if len(self._prices) == self._prices.maxlen:
             old_p = self._prices[0]
@@ -197,23 +227,39 @@ class VWAPReversionStrategy(Strategy):
             vol = 1.0
         self._push(current_price, vol)
         self._n += 1
+
         if self._n < self.warmup:
+            self._log(f"Warmup {self._n}/{self.warmup}")
             return
+
         vwap = self._vwap()
         z = self._zscore(current_price)
+
         if vwap is None or z is None:
+            self._log(f"VWAP/Z-score inválidos: vwap={vwap}, z={z}")
             return
+
+        self._log(
+            f"Price=${current_price:.2f} | VWAP=${vwap:.2f} | Z={z:+.2f} | "
+            f"InPos={self.position.has_position}"
+        )
 
         # Entrada
         if not self.position.has_position:
             qty_position = max(0.0, min(1.0, self.qty_frac))
             if z <= -abs(self.z_entry):
+                self._log(
+                    f"ENTRY LONG @ ${current_price:.2f} (z={z:.2f} <= {-abs(self.z_entry):.2f})"
+                )
                 executor.market_buy(symbol, qty_position)
                 self.position.side = "LONG"
                 self.position.qty = qty_position
                 self.position.entry_price = current_price
                 return
             if z >= abs(self.z_entry):
+                self._log(
+                    f"ENTRY SHORT @ ${current_price:.2f} (z={z:.2f} >= {abs(self.z_entry):.2f})"
+                )
                 executor.market_sell(symbol, qty_position)
                 self.position.side = "SHORT"
                 self.position.qty = qty_position
@@ -232,6 +278,7 @@ class VWAPReversionStrategy(Strategy):
 
             # TP
             if pnl_pct >= self.take_profit_pct:
+                self._log(f"🎯 TAKE PROFIT @ ${current_price:.2f} (pnl={pnl_pct*100:.2f}%)")
                 if self.position.side == "LONG":
                     executor.market_sell(symbol, self.position.qty)
                 else:
@@ -241,6 +288,7 @@ class VWAPReversionStrategy(Strategy):
                 return
             # SL
             if pnl_pct <= -self.stop_loss_pct:
+                self._log(f"🛑 STOP LOSS @ ${current_price:.2f} (pnl={pnl_pct*100:.2f}%)")
                 if self.position.side == "LONG":
                     executor.market_sell(symbol, self.position.qty)
                 else:
@@ -249,11 +297,24 @@ class VWAPReversionStrategy(Strategy):
                 self.position.side = None
                 return
 
-        # Cierre por vuelta a banda
+        # Cierre por vuelta a banda — proteger contra salidas no rentables
         if self.position.has_position and abs(z) <= abs(self.z_exit):
-            if self.position.side == "LONG":
-                executor.market_sell(symbol, self.position.qty)
+            side = "LONG" if self.position.side == "LONG" else "SHORT"
+            qty = abs(self.position.qty)
+            if will_exit_non_negative(
+                broker,
+                entry_side=side,
+                entry_price=self.position.entry_price,
+                current_price=current_price,
+                qty=qty,
+            ):
+                self._log(f"EXIT {side} @ ${current_price:.2f} (z={z:.2f} revirtió a banda)")
+                if self.position.side == "LONG":
+                    executor.market_sell(symbol, self.position.qty)
+                else:
+                    executor.market_buy(symbol, self.position.qty)
+                self.position.qty = 0.0
+                self.position.side = None
             else:
-                executor.market_buy(symbol, self.position.qty)
-            self.position.qty = 0.0
-            self.position.side = None
+                self._log(f"⏸️  Skip EXIT {side} por coste (no rentable)")
+                return

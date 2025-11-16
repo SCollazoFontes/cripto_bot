@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from core.costs import CostModel, SlippageModel, apply_fees, apply_slippage, estimate_costs
+from core.execution.costs import (
+    CostModel,
+    SlippageModel,
+    apply_fees,
+    apply_slippage,
+    estimate_costs,
+)
 
 
 def test_apply_fees_basic():

@@ -21,18 +21,21 @@ def _resample_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         # Redondear timestamp al segundo más cercano (floor)
         df_copy["ts_second"] = df_copy["timestamp"].apply(lambda x: int(x))
 
-        # Agrupar por segundo y agregar OHLCV
-        grouped = (
-            df_copy.groupby("ts_second")
-            .agg({"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
-            .reset_index()
-        )
+        # Agrupar por segundo y agregar OHLCV + dollar_value
+        agg_dict = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+        if "dollar_value" in df_copy.columns:
+            agg_dict["dollar_value"] = "sum"
+
+        grouped = df_copy.groupby("ts_second").agg(agg_dict).reset_index()
 
         # Renombrar columna de vuelta a timestamp
         grouped = grouped.rename(columns={"ts_second": "timestamp"})
 
-        # Calcular volumen en USDT
-        grouped["volume_usdt"] = grouped["volume"] * grouped["close"]
+        # Usar dollar_value si existe, sino calcular (fallback)
+        if "dollar_value" in grouped.columns:
+            grouped["volume_usdt"] = grouped["dollar_value"]
+        else:
+            grouped["volume_usdt"] = grouped["volume"] * grouped["close"]
 
         return grouped
 
@@ -46,28 +49,31 @@ def _resample_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         "30s": "30s",
         "1m": "1min",
         "5m": "5min",
-        "1H": "1h",
+        "1h": "1h",
     }
 
     rule = tf_map.get(timeframe, "5s")
 
-    # Calcular volumen en USDT antes de resamplear
-    df_copy["volume_usdt"] = df_copy["volume"] * df_copy["close"]
+    # Usar dollar_value si existe, sino calcular volumen USDT
+    agg_dict = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+    }
 
-    resampled = (
-        df_copy.resample(rule)
-        .agg(
-            {
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum",
-                "volume_usdt": "sum",
-            }
-        )
-        .dropna()
-    )
+    if "dollar_value" in df_copy.columns:
+        agg_dict["dollar_value"] = "sum"
+    else:
+        df_copy["volume_usdt"] = df_copy["volume"] * df_copy["close"]
+        agg_dict["volume_usdt"] = "sum"
+
+    resampled = df_copy.resample(rule).agg(agg_dict).dropna()
+
+    # Asignar volume_usdt desde dollar_value si existe
+    if "dollar_value" in resampled.columns:
+        resampled["volume_usdt"] = resampled["dollar_value"]
 
     resampled["timestamp"] = resampled.index.astype(np.int64) // 10**9
     resampled = resampled.reset_index(drop=True)
@@ -77,7 +83,8 @@ def _resample_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 def render_chart_ohlc(run_dir: str, timeframe: str, width: int = 900, height: int = 600):
     """Renderiza gráfico OHLC con dimensiones fijas."""
-    data_file = Path(run_dir) / "data.csv"
+    # Usar chart.csv (barras de tiempo) en lugar de data.csv (micro-velas)
+    data_file = Path(run_dir) / "chart.csv"
 
     # Placeholder mientras carga
     placeholder = st.empty()
@@ -153,8 +160,9 @@ def render_chart_ohlc(run_dir: str, timeframe: str, width: int = 900, height: in
         if trades_file.exists():
             trades = pd.read_csv(trades_file)
             if not trades.empty and "timestamp" in trades.columns:
-                buys = trades[trades["side"] == "buy"]
-                sells = trades[trades["side"] == "sell"]
+                trades["side_norm"] = trades["side"].astype(str).str.upper()
+                buys = trades[trades["side_norm"] == "BUY"]
+                sells = trades[trades["side_norm"] == "SELL"]
                 buy_times = buys["timestamp"].tolist()
                 sell_times = sells["timestamp"].tolist()
                 buy_prices = buys["price"].tolist()
@@ -297,7 +305,8 @@ def render_chart_ohlc(run_dir: str, timeframe: str, width: int = 900, height: in
 
 def render_volume_chart(run_dir: str, timeframe: str, width: int = 900, height: int = 150):
     """Renderiza gráfico de volumen con dimensiones fijas."""
-    data_file = Path(run_dir) / "data.csv"
+    # Usar chart.csv (barras de tiempo) en lugar de data.csv (micro-velas)
+    data_file = Path(run_dir) / "chart.csv"
 
     # Placeholder mientras carga
     placeholder = st.empty()

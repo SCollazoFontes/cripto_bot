@@ -8,11 +8,13 @@ from __future__ import annotations
 from typing import Any
 
 from .base import BarBuilder
-from .composite import CompositeBarBuilder
-from .dollar import DollarBarBuilder
-from .imbalance import ImbalanceBarBuilder
-from .tick_count import TickCountBarBuilder
-from .volume_qty import VolumeQtyBarBuilder
+from .builders import (
+    CompositeBarBuilder,
+    DollarBarBuilder,
+    ImbalanceBarBuilder,
+    TickCountBarBuilder,
+    VolumeQtyBarBuilder,
+)
 
 __all__ = [
     "register_builder",

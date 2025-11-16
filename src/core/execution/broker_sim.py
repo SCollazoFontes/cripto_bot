@@ -11,9 +11,9 @@ from dataclasses import dataclass
 import logging
 from typing import Any, Literal
 
-from core.broker import Broker
-from core.costs import CostModel
-from core.portfolio import Portfolio, PortfolioConfig
+from core.execution.broker import Broker
+from core.execution.costs import CostModel
+from core.execution.portfolio import Portfolio, PortfolioConfig
 
 logger = logging.getLogger(__name__)
 

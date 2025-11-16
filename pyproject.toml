@@ -58,6 +58,10 @@ module = "core.strategy_runtime"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
+module = "core.monitoring.strategy_runtime"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
 module = "strategies.*"
 ignore_errors = true
 

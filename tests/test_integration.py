@@ -116,7 +116,7 @@ def test_full_pipeline_smoke():
     from datetime import datetime, timezone
 
     from bars.base import Trade
-    from bars.tick_count import TickCountBarBuilder
+    from bars.builders import TickCountBarBuilder
 
     # Create builder
     builder = TickCountBarBuilder(tick_limit=3)

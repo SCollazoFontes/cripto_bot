@@ -23,7 +23,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from bars import dollar, imbalance, tick_count, volume_qty
+from bars import builders
 from bars.base import Trade
 from data.feeds.binance_trades import iter_trades
 
@@ -35,16 +35,14 @@ def get_builder(name: str, params: dict[str, Any]) -> Any:
     """Devuelve instancia del builder correspondiente con sus parámetros."""
     name = name.lower()
     if name == "tick_count":
-        return tick_count.TickCountBarBuilder(tick_limit=int(params.get("count", 100)))
+        return builders.TickCountBarBuilder(tick_limit=int(params.get("count", 100)))
     if name == "volume_qty":
-        return volume_qty.VolumeQtyBarBuilder(qty_limit=float(params.get("qty_limit", 1.0)))
+        return builders.VolumeQtyBarBuilder(qty_limit=float(params.get("qty_limit", 1.0)))
     if name == "dollar":
-        return dollar.DollarBarBuilder(value_limit=float(params.get("dollar_limit", 1000.0)))
+        return builders.DollarBarBuilder(value_limit=float(params.get("dollar_limit", 1000.0)))
     if name == "imbalance":
         # Map "alpha" parameter to "imbal_limit" for ImbalanceBarBuilder
-        return imbalance.ImbalanceBarBuilder(
-            imbal_limit=float(params.get("alpha", 0.8)), mode="qty"
-        )
+        return builders.ImbalanceBarBuilder(imbal_limit=float(params.get("alpha", 0.8)), mode="qty")
     raise ValueError(f"Builder '{name}' no reconocido")
 
 

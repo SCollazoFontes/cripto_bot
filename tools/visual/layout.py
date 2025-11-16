@@ -6,12 +6,20 @@ import time
 import streamlit as st
 
 try:
-    from tools.visual.chart_ohlc import (
-        render_ohlc_volume,
-    )
+    from tools.visual.chart_ohlc import render_ohlc_volume
+    from tools.visual.components.decision_panel import render_decision_panel
+    from tools.visual.components.kpis_panel import render_kpis_panel
+    from tools.visual.components.metrics_header import render_header
+    from tools.visual.components.signal_panel import render_signal_panel
+    from tools.visual.components.timeframe import render_timeframe_selector
     from tools.visual.kill_switch import handle_kill_switch
 except ModuleNotFoundError:
     from chart_ohlc import render_ohlc_volume
+    from components.decision_panel import render_decision_panel
+    from components.kpis_panel import render_kpis_panel
+    from components.metrics_header import render_header
+    from components.signal_panel import render_signal_panel
+    from components.timeframe import render_timeframe_selector
     from kill_switch import handle_kill_switch
 
 
@@ -132,37 +140,13 @@ def render_dashboard(run_dir: str):
     # Kill switch en sidebar
     handle_kill_switch(run_dir)
 
-    # Selector de timeframe fijo en la parte superior (horizontal)
+    # Selector de timeframe y estado
     tf_options = ["1s", "5s", "10s", "30s", "1m", "5m", "1h"]
-    cols = st.columns([0.6] + [0.5] * len(tf_options) + [8])
-
-    # Inicializar timeframe en session_state
-    if "selected_tf" not in st.session_state:
-        st.session_state.selected_tf = "1s"
+    render_timeframe_selector(tf_options)
 
     # Inicializar contador de última fila procesada para evitar parpadeos
     if "last_row_count" not in st.session_state:
         st.session_state.last_row_count = 0
-
-    with cols[0]:
-        st.markdown(
-            (
-                '<div style="color: #848e9c; font-size: 13px; '
-                "font-weight: 500; padding-top: 4px; "
-                'line-height: 32px;">Tiempo</div>'
-            ),
-            unsafe_allow_html=True,
-        )
-
-    for idx, tf in enumerate(tf_options):
-        with cols[idx + 1]:
-            # Determinar si este botón está seleccionado
-            is_selected = st.session_state.selected_tf == tf
-            button_type = "primary" if is_selected else "secondary"
-
-            if st.button(tf, key=f"tf_{tf}", type=button_type):
-                st.session_state.selected_tf = tf
-                st.rerun()
 
     # Layout principal: 2 columnas (gráfico ancho + panel info)
     col_main, col_info = st.columns([6.5, 2])
@@ -239,71 +223,17 @@ def render_dashboard(run_dir: str):
             change_color = "#848e9c"
 
         # Fila superior con métricas en tiempo real
-        header_cols = st.columns(6)
-        with header_cols[0]:
-            st.markdown(
-                (
-                    '<div style="color: #f0b90b; font-size: 24px; '
-                    'font-weight: 700; line-height: 1.0; text-align: center;">'
-                    f"{current_price:,.2f}</div>"
-                ),
-                unsafe_allow_html=True,
-            )
-        with header_cols[1]:
-            st.markdown(
-                (
-                    f'<div style="color: {change_color}; font-size: 24px; '
-                    'font-weight: 700; line-height: 1.0; text-align: center;">'
-                    f"{price_change_pct:+.2f}%</div>"
-                ),
-                unsafe_allow_html=True,
-            )
-        with header_cols[2]:
-            st.markdown(
-                (
-                    '<div style="line-height: 1.2; text-align: center;">'
-                    '<span style="color: #848e9c; font-size: 16px;">Máx: </span>'
-                    '<span style="color: #ffffff; font-size: 20px; font-weight: 600;">'
-                    f"{session_high:,.2f}</span></div>"
-                ),
-                unsafe_allow_html=True,
-            )
-        with header_cols[3]:
-            st.markdown(
-                (
-                    '<div style="line-height: 1.2; text-align: center;">'
-                    '<span style="color: #848e9c; font-size: 16px;">Mín: </span>'
-                    '<span style="color: #ffffff; font-size: 20px; font-weight: 600;">'
-                    f"{session_low:,.2f}</span></div>"
-                ),
-                unsafe_allow_html=True,
-            )
-        with header_cols[4]:
-            if last_volume >= 1_000_000:
-                vol_display = f"{last_volume / 1_000_000:.2f}M"
-            elif last_volume >= 1_000:
-                vol_display = f"{last_volume / 1_000:.2f}K"
-            else:
-                vol_display = f"{last_volume:,.2f}"
-            st.markdown(
-                (
-                    '<div style="line-height: 1.2; text-align: center;">'
-                    '<span style="color: #848e9c; font-size: 16px;">Vol: </span>'
-                    '<span style="color: #ffffff; font-size: 20px; font-weight: 600;">'
-                    f"{vol_display}</span></div>"
-                ),
-                unsafe_allow_html=True,
-            )
-        with header_cols[5]:
-            st.markdown(
-                (
-                    '<div style="line-height: 1.2; text-align: center;">'
-                    '<span style="color: #848e9c; font-size: 16px;">T: </span>'
-                    '<span style="color: #ffffff; font-size: 20px; font-weight: 600;">'
-                    f"{elapsed_minutes:02d}:{elapsed_secs:02d}</span></div>"
-                ),
-                unsafe_allow_html=True,
-            )
+        metrics = {
+            "current_price": current_price,
+            "price_change_pct": price_change_pct,
+            "session_high": session_high,
+            "session_low": session_low,
+            "last_volume": last_volume,
+            "elapsed_minutes": elapsed_minutes,
+            "elapsed_secs": elapsed_secs,
+            "change_color": change_color,
+        }
+        render_header(metrics)
 
         st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
         # Gráfico combinado
@@ -344,7 +274,8 @@ def render_dashboard(run_dir: str):
 
             tr_df = pd.read_csv(trades_file)
             if not tr_df.empty:
-                buys = tr_df[tr_df["side"] == "buy"]
+                tr_df["side_norm"] = tr_df["side"].astype(str).str.upper()
+                buys = tr_df[tr_df["side_norm"] == "BUY"]
                 if not buys.empty:
                     total_qty = buys["qty"].sum()
                     if total_qty > 0:
@@ -391,77 +322,75 @@ def render_dashboard(run_dir: str):
 
         st.markdown(pos_block_html, unsafe_allow_html=True)
 
-        # Señal estrategia - Calcular usando lógica de momentum_v2
+        # Señal estrategia - Calcular usando el módulo de señales
         manifest_file = Path(run_dir) / "manifest.json"
         signal_value = 0.0
-        long_threshold = 0.0015
-        short_threshold = -0.0015
-        lookback_ticks = 20
+        zone_text = "NEUTRAL"
+        signal_metadata = {}
+        strategy_name = "momentum"  # default
 
         if manifest_file.exists():
             import json
 
             with open(manifest_file) as f:
                 manifest = json.load(f)
+                strategy_name = manifest.get("strategy", "momentum")
                 params = manifest.get("params", {})
-                long_threshold = params.get("entry_threshold", 0.0015)
-                exit_threshold = params.get("exit_threshold", 0.001)
-                short_threshold = -exit_threshold
-                lookback_ticks = params.get("lookback_ticks", 20)
 
-        # Calcular señal usando lógica de momentum_v2
-        if data_file.exists() and not df.empty and len(df) >= lookback_ticks:
-            import pandas as pd
+        # Calcular señal usando el sistema modular
+        if data_file.exists() and not df.empty:
+            from pathlib import Path as P
+            import sys
 
-            # Obtener últimos precios para calcular momentum
-            recent_prices = df["close"].tail(lookback_ticks)
-            mean_price = recent_prices.mean()
+            # Asegurar que src esté en el path
+            src_path = P(__file__).parent.parent.parent / "src"
+            if str(src_path) not in sys.path:
+                sys.path.insert(0, str(src_path))
 
-            if mean_price > 0:
-                # Momentum = (precio_actual - media) / media
-                momentum = (current_price - mean_price) / mean_price
+            try:
+                from strategies.signals import calculate_signal
 
-                # Normalizar a rango [-1, +1] usando los umbrales como referencia
-                # Si momentum >= long_threshold → señal positiva fuerte
-                # Si momentum <= short_threshold → señal negativa fuerte
-                # Entre umbrales → zona neutral
-
-                if momentum >= long_threshold:
-                    # Escalar desde long_threshold hasta un máximo razonable (ej: 3x threshold)
-                    max_signal = long_threshold * 3
-                    signal_value = min(1.0, momentum / max_signal)
-                elif momentum <= short_threshold:
-                    # Escalar desde short_threshold hasta un mínimo razonable
-                    min_signal = short_threshold * 3
-                    signal_value = max(-1.0, momentum / min_signal)
-                else:
-                    # Zona neutral: escalar linealmente entre umbrales
-                    neutral_range = long_threshold - short_threshold
-                    if neutral_range > 0:
-                        signal_value = (momentum - short_threshold) / neutral_range * 2 - 1
-                    else:
-                        signal_value = 0.0
-
-                # Clip final por seguridad
-                signal_value = max(-1.0, min(1.0, signal_value))
+                signal_value, zone_text, signal_metadata = calculate_signal(
+                    strategy_name=strategy_name,
+                    df=df,
+                    params=params if manifest_file.exists() else None,
+                )
+            except Exception as e:
+                # Fallback: señal neutral
+                signal_value = 0.0
+                zone_text = "ERROR"
+                signal_metadata = {"error": str(e)}
 
         # Calcular posición del marcador en la barra (0-100%)
+        # Escala -1 a +1 → 0% a 100%
         marker_position = ((signal_value + 1) / 2) * 100
 
-        # Calcular posiciones de los umbrales en la barra
-        long_threshold_pos = ((long_threshold + 1) / 2) * 100
-        short_threshold_pos = ((short_threshold + 1) / 2) * 100
-
         # Determinar color del valor según la zona
-        if signal_value >= long_threshold:
+        if signal_value >= 0.5:
             signal_color = "#0ecb81"  # Verde
-            zone_text = "LONG"
-        elif signal_value <= short_threshold:
+        elif signal_value <= -0.5:
             signal_color = "#f6465d"  # Rojo
-            zone_text = "SHORT"
         else:
-            signal_color = "#848e9c"  # Gris
-            zone_text = "NEUTRAL"
+            signal_color = "#848e9c"  # Gris neutral
+
+        # Calcular posiciones de thresholds para la visualización
+        # Usar entry_threshold como referencia
+        if manifest_file.exists():
+            manifest_params = manifest.get("params", {})
+            entry_threshold = manifest_params.get("entry_threshold", 0.001)
+            exit_threshold = manifest_params.get("exit_threshold", entry_threshold * 0.5)
+        else:
+            entry_threshold = 0.001
+            exit_threshold = 0.0005
+
+        # Normalizar thresholds a escala -1 a +1
+        max_signal = entry_threshold * 3
+        long_threshold_norm = min(1.0, entry_threshold / max_signal)
+        short_threshold_norm = -long_threshold_norm
+
+        # Calcular posiciones de los thresholds en la barra (0-100%)
+        long_threshold_pos = ((long_threshold_norm + 1) / 2) * 100
+        short_threshold_pos = ((short_threshold_norm + 1) / 2) * 100
 
         signal_block_html = (
             '<div style="padding: 0px 8px; margin-top: 12px; margin-bottom: 0px;">'
@@ -488,13 +417,14 @@ def render_dashboard(run_dir: str):
             '      border-radius: 50%; box-shadow: 0 0 4px rgba(255,255,255,0.6);"></div>'
             "  </div>"
             '  <div style="display: flex; justify-content: space-between; margin-top: 4px;">'
-            f'    <span style="color: #848e9c; font-size: 14px;">Short: {short_threshold:+.4f}</span>'
-            f'    <span style="color: #848e9c; font-size: 14px;">Long: {long_threshold:+.4f}</span>'
+            f'    <span style="color: #848e9c; font-size: 14px;">Short: {short_threshold_norm:+.4f}</span>'
+            f'    <span style="color: #848e9c; font-size: 14px;">Long: {long_threshold_norm:+.4f}</span>'
             "  </div>"
             "</div>"
         )
 
-        st.markdown(signal_block_html, unsafe_allow_html=True)
+        # Señal y barra visuales
+        render_signal_panel(run_dir, df if "df" in locals() else None)
 
         # KPIs internos
         # TODO: Obtener valores reales de la estrategia cuando estén disponibles
@@ -551,7 +481,7 @@ def render_dashboard(run_dir: str):
             "</div>"
         )
 
-        st.markdown(kpis_block_html, unsafe_allow_html=True)
+        render_kpis_panel()
 
         # Decisión del bot - Leer último trade
         last_action = "—"
@@ -646,7 +576,7 @@ def render_dashboard(run_dir: str):
             "</div>"
         )
 
-        st.markdown(decision_block_html, unsafe_allow_html=True)
+        render_decision_panel(run_dir)
 
     # Auto-refresh
     if has_new_data:

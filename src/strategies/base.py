@@ -346,4 +346,68 @@ __all__ = [
     "_close_long",
     "_open_short",
     "_close_short",
+    "will_exit_non_negative",
 ]
+
+
+def _eff_price_from_broker(broker: Any, price: float, side: str) -> float:
+    """Obtiene precio efectivo aplicando slippage del broker si está disponible."""
+    try:
+        # Broker paper expone _apply_slippage(side: OrderSide|str)
+        return float(broker._apply_slippage(float(price), str(side).upper()))  # type: ignore[attr-defined]
+    except Exception:
+        return float(price)
+
+
+def _fee_rate_from_broker(broker: Any) -> float:
+    """Obtiene fee rate (proporción) desde la config interna del broker si existe."""
+    try:
+        return float(getattr(getattr(broker, "_exec", object()), "fee_pct", 0.0))
+    except Exception:
+        return 0.0
+
+
+def will_exit_non_negative(
+    broker: Any,
+    entry_side: str,
+    entry_price: float | None,
+    current_price: float,
+    qty: float,
+) -> bool:
+    """
+    Devuelve True si cerrar ahora no realiza una pérdida neta en el round-trip
+    bajo el modelo simple de costes del broker (fees + slippage simétricos).
+
+    - Para LONG (entry BUY → exit SELL):
+      pnl = (sell_eff - buy_eff)*qty - (fee_buy + fee_sell) >= 0
+    - Para SHORT (entry SELL → exit BUY):
+      pnl = (sell_eff - buy_eff)*(-qty) - (fee_buy + fee_sell) >= 0
+
+    Nota: Si no hay entry_price o qty<=0, retorna True (no bloquea la salida).
+    """
+    try:
+        if entry_price is None or qty <= 0.0:
+            return True
+        fee_rate = _fee_rate_from_broker(broker)
+        side_norm = str(entry_side).upper()
+        if side_norm in ("LONG", "BUY"):
+            buy_eff = _eff_price_from_broker(broker, float(entry_price), "BUY")
+            sell_eff = _eff_price_from_broker(broker, float(current_price), "SELL")
+            fee_buy = abs(buy_eff * qty * fee_rate)
+            fee_sell = abs(sell_eff * qty * fee_rate)
+            pnl = (sell_eff - buy_eff) * qty - (fee_buy + fee_sell)
+            return pnl >= 0.0
+        elif side_norm in ("SHORT", "SELL"):
+            # Entry SELL @ buy_eff (recibe cash), exit BUY @ sell_eff (paga cash)
+            sell_eff_entry = _eff_price_from_broker(broker, float(entry_price), "SELL")
+            buy_eff_exit = _eff_price_from_broker(broker, float(current_price), "BUY")
+            fee_sell = abs(sell_eff_entry * qty * fee_rate)
+            fee_buy = abs(buy_eff_exit * qty * fee_rate)
+            # PnL por unidad: entrada recibe sell_eff_entry, salida paga buy_eff_exit
+            pnl = (sell_eff_entry - buy_eff_exit) * qty - (fee_buy + fee_sell)
+            return pnl >= 0.0
+        else:
+            return True
+    except Exception:
+        # Ante cualquier problema, no bloquear la salida
+        return True

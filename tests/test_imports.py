@@ -10,14 +10,20 @@ from __future__ import annotations
 
 def test_import_bars_modules():
     """Test that bars submodules can be imported."""
-    from bars import dollar, imbalance, registry, tick_count, volume_qty
+    from bars import registry
+    from bars.builders import (
+        DollarBarBuilder,
+        ImbalanceBarBuilder,
+        TickCountBarBuilder,
+        VolumeQtyBarBuilder,
+    )
     from bars.base import Bar, BarBuilder, Trade
 
-    assert dollar is not None
-    assert imbalance is not None
+    assert DollarBarBuilder is not None
+    assert ImbalanceBarBuilder is not None
     assert registry is not None
-    assert tick_count is not None
-    assert volume_qty is not None
+    assert TickCountBarBuilder is not None
+    assert VolumeQtyBarBuilder is not None
     assert Bar is not None
     assert BarBuilder is not None
     assert Trade is not None
@@ -25,9 +31,8 @@ def test_import_bars_modules():
 
 def test_import_core_modules():
     """Test that core submodules can be imported."""
-    from core.broker import Broker
-    from core.broker_sim import SimBroker, SimBrokerConfig
-    from core.costs import _apply_fees, _apply_slippage
+    from core.execution import Broker, SimBroker, SimBrokerConfig
+    from core.execution.costs import _apply_fees, _apply_slippage
     from core.types import Account, TradeRow
 
     assert Broker is not None

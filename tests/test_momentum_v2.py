@@ -19,7 +19,7 @@ import time
 import pytest
 
 from bars.base import Trade
-from bars.volume_qty import VolumeQtyBarBuilder
+from bars.builders import VolumeQtyBarBuilder
 from brokers.binance_paper import BinancePaperBroker, _ExecCfg
 from data.feeds.binance_trades import iter_trades
 from strategies.base import get_strategy_class

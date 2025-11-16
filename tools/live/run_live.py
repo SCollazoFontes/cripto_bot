@@ -19,11 +19,12 @@ import json
 import pathlib
 import time
 
+from core.decisions_log import write_decisions_csv  # noqa: E402
+
 # Se asume que PYTHONPATH incluye `${workspaceFolder}/src` (configurado en .vscode/settings.json)
 # ---- Core broker/estrategias (según tu estructura actual) ----
-from core.broker_sim import SimBroker, SimBrokerConfig  # noqa: E402
-from core.costs import estimate_costs  # noqa: E402
-from core.decisions_log import write_decisions_csv  # noqa: E402
+from core.execution import SimBroker, SimBrokerConfig  # noqa: E402
+from core.execution.costs import estimate_costs  # noqa: E402
 from core.strategy_runtime import (
     build_position_state,
 )  # usa PositionState(entry_price=...)  # noqa: E402

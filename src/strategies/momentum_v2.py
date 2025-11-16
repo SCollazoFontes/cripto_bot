@@ -18,8 +18,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
-from core.costs import CostModel
-from strategies.base import Strategy, register_strategy
+from core.execution.costs import CostModel
+from strategies.base import Strategy, register_strategy, will_exit_non_negative
 
 
 @register_strategy("momentum_v2")
@@ -219,15 +219,24 @@ class MomentumV2Strategy(Strategy):
                     self._bars_since_exit = 0
                 return
 
-            # 3. Exit normal (momentum reversal)
+            # 3. Exit normal (momentum reversal) — proteger contra salidas no rentables
             if momentum < -self.exit_threshold:
                 qty = current_qty if current_qty > 0 else self._pos_qty
                 if qty > 0:
-                    self._log(f"📉 EXIT (momentum reversal) @ ${price:.2f}")
-                    executor.market_sell(symbol, qty)
-                    self._in_pos = False
-                    self._pos_qty = 0.0
-                    self._bars_since_exit = 0
+                    if will_exit_non_negative(
+                        broker,
+                        entry_side="LONG",
+                        entry_price=self._entry_price,
+                        current_price=price,
+                        qty=qty,
+                    ):
+                        self._log(f"📉 EXIT (momentum reversal) @ ${price:.2f}")
+                        executor.market_sell(symbol, qty)
+                        self._in_pos = False
+                        self._pos_qty = 0.0
+                        self._bars_since_exit = 0
+                    else:
+                        self._log("⏸️  Skip EXIT: no rentable neto tras costes")
                 return
 
         # ==================== EVALUACIÓN DE ENTRADA ====================

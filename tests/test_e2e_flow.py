@@ -67,8 +67,7 @@ def test_builder_creation():
 
     try:
         from bars.base import Trade
-        from bars.tick_count import TickCountBarBuilder
-        from bars.volume_qty import VolumeQtyBarBuilder
+        from bars.builders import TickCountBarBuilder, VolumeQtyBarBuilder
 
         now = datetime.now(timezone.utc)
 
@@ -191,7 +190,7 @@ def test_broker_paper():
 
 async def _full_flow_simulation_async() -> bool:
     from bars.base import Trade
-    from bars.volume_qty import VolumeQtyBarBuilder
+    from bars.builders import VolumeQtyBarBuilder
     from data.feeds.binance_trades import iter_trades
 
     logger.info("Configurando builder y estrategia...")

@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from .base import Bar, BarBuilder, Trade
+from bars.base import Bar, BarBuilder, Trade
 
 __all__ = ["CompositeBarBuilder"]
 

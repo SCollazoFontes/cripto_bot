@@ -14,7 +14,7 @@ import pytest
 
 def test_tick_count_builder_creation():
     """Test creating a TickCountBarBuilder."""
-    from bars.tick_count import TickCountBarBuilder
+    from bars.builders import TickCountBarBuilder
 
     builder = TickCountBarBuilder(tick_limit=10)
     assert builder.tick_limit == 10
@@ -24,7 +24,7 @@ def test_tick_count_builder_creation():
 
 def test_volume_qty_builder_creation():
     """Test creating a VolumeQtyBarBuilder."""
-    from bars.volume_qty import VolumeQtyBarBuilder
+    from bars.builders import VolumeQtyBarBuilder
 
     builder = VolumeQtyBarBuilder(qty_limit=5.0)
     assert builder.qty_limit == 5.0
@@ -35,7 +35,7 @@ def test_volume_qty_builder_creation():
 def test_tick_count_builder_updates():
     """Test that TickCountBarBuilder closes bars correctly."""
     from bars.base import Trade
-    from bars.tick_count import TickCountBarBuilder
+    from bars.builders import TickCountBarBuilder
 
     builder = TickCountBarBuilder(tick_limit=3)
     now = datetime.now(timezone.utc)
@@ -67,7 +67,7 @@ def test_tick_count_builder_updates():
 def test_volume_qty_builder_updates():
     """Test that VolumeQtyBarBuilder closes bars correctly."""
     from bars.base import Trade
-    from bars.volume_qty import VolumeQtyBarBuilder
+    from bars.builders import VolumeQtyBarBuilder
 
     builder = VolumeQtyBarBuilder(qty_limit=5.0)
     now = datetime.now(timezone.utc)

@@ -22,13 +22,32 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from . import registry
+from .aggregators import TimeBarAggregator
 from .base import BarBuilder
+
+# Re-export builders from new structure
+from .builders import (
+    CompositeBarBuilder,
+    DollarBarBuilder,
+    ImbalanceBarBuilder,
+    TickCountBarBuilder,
+    TimeBarBuilder,
+    VolumeQtyBarBuilder,
+)
 
 __all__ = [
     "make",
     "BuilderConfig",
     "available_builders",
     "registry",
+    # re-exports
+    "TimeBarAggregator",
+    "CompositeBarBuilder",
+    "DollarBarBuilder",
+    "ImbalanceBarBuilder",
+    "TickCountBarBuilder",
+    "TimeBarBuilder",
+    "VolumeQtyBarBuilder",
 ]
 
 

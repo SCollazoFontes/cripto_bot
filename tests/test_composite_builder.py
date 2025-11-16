@@ -17,7 +17,7 @@ def _trade(price: float, qty: float, t=None, buyer_maker=False):
 
 
 def test_composite_any_policy_tick_or_qty():
-    from bars.composite import CompositeBarBuilder
+    from bars.builders import CompositeBarBuilder
 
     b = CompositeBarBuilder(tick_limit=3, qty_limit=5.0, policy="any")
 
@@ -40,7 +40,7 @@ def test_composite_any_policy_tick_or_qty():
 
 
 def test_composite_all_policy():
-    from bars.composite import CompositeBarBuilder
+    from bars.builders import CompositeBarBuilder
 
     b = CompositeBarBuilder(tick_limit=3, qty_limit=5.0, policy="all")
 
@@ -56,7 +56,7 @@ def test_composite_all_policy():
 
 
 def test_composite_with_imbalance_qty_any():
-    from bars.composite import CompositeBarBuilder
+    from bars.builders import CompositeBarBuilder
 
     # imbal_limit=2 en modo qty; buyer_maker False => taker comprador => signo +1
     b = CompositeBarBuilder(imbal_limit=2.0, imbal_mode="qty", policy="any")
@@ -69,7 +69,7 @@ def test_composite_with_imbalance_qty_any():
 
 
 def test_composite_validation():
-    from bars.composite import CompositeBarBuilder
+    from bars.builders import CompositeBarBuilder
 
     with pytest.raises(ValueError):
         CompositeBarBuilder()  # no thresholds

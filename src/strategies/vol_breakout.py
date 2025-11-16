@@ -13,9 +13,16 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, ClassVar
 
-from strategies.base import PositionState, Strategy, atr_like, register_strategy
+from strategies.base import (
+    PositionState,
+    Strategy,
+    atr_like,
+    register_strategy,
+    will_exit_non_negative,
+)
 
 
+@register_strategy("vol_breakout")
 class VolatilityBreakoutStrategy(Strategy):
     """Estrategia de breakout de volatilidad.
 
@@ -134,17 +141,37 @@ class VolatilityBreakoutStrategy(Strategy):
 
         # Salida por reversión (precio vuelve dentro del canal tras ruptura reciente)
         if pos_qty > 0 and close < ch_high:  # Long pierde impulso
-            self._log("EXIT LONG por reversión canal")
-            executor.market_sell(symbol, pos_qty)
-            self.position.qty = 0.0
-            self.position.side = None
-            return
+            if will_exit_non_negative(
+                broker,
+                entry_side="LONG",
+                entry_price=self.position.entry_price,
+                current_price=close,
+                qty=pos_qty,
+            ):
+                self._log("EXIT LONG por reversión canal")
+                executor.market_sell(symbol, pos_qty)
+                self.position.qty = 0.0
+                self.position.side = None
+                return
+            else:
+                self._log("⏸️  Skip EXIT LONG por coste (no rentable)")
+                return
         if pos_qty < 0 and close > ch_low:  # Short pierde impulso
-            self._log("EXIT SHORT por reversión canal")
-            executor.market_buy(symbol, abs(pos_qty))
-            self.position.qty = 0.0
-            self.position.side = None
-            return
+            if will_exit_non_negative(
+                broker,
+                entry_side="SHORT",
+                entry_price=self.position.entry_price,
+                current_price=close,
+                qty=abs(pos_qty),
+            ):
+                self._log("EXIT SHORT por reversión canal")
+                executor.market_buy(symbol, abs(pos_qty))
+                self.position.qty = 0.0
+                self.position.side = None
+                return
+            else:
+                self._log("⏸️  Skip EXIT SHORT por coste (no rentable)")
+                return
 
 
 # Registro único

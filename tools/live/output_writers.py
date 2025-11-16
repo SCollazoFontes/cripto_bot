@@ -6,7 +6,9 @@ import argparse
 import csv
 from datetime import UTC, datetime
 import json
+import os
 import pathlib
+import tempfile
 
 
 def write_decisions_csv(run_dir: pathlib.Path, decisions: list[dict]) -> None:
@@ -19,10 +21,34 @@ def write_decisions_csv(run_dir: pathlib.Path, decisions: list[dict]) -> None:
         writer.writerows(decisions)
 
 
+def _atomic_json_write(path: pathlib.Path, payload: dict) -> None:
+    """Escribe JSON de forma atómica usando archivo temporal y rename.
+
+    Evita archivos truncados si el proceso es interrumpido durante la escritura.
+    """
+    try:
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=path.name, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w") as f:
+                json.dump(payload, f, indent=2)
+            os.replace(tmp_path, path)  # rename atómico en POSIX
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+    except Exception:
+        # Fallback no atómico
+        try:
+            with path.open("w") as f:
+                json.dump(payload, f, indent=2)
+        except Exception:
+            pass
+
+
 def write_summary(run_dir: pathlib.Path, stats: dict) -> None:
-    """Guarda resumen de ejecución."""
-    with (run_dir / "summary.json").open("w") as f:
-        json.dump(stats, f, indent=2)
+    """Guarda resumen de ejecución (atomic)."""
+    _atomic_json_write(run_dir / "summary.json", stats)
 
 
 def write_returns_csv(run_dir: pathlib.Path, equity_rows: list[tuple]) -> None:
@@ -99,6 +125,8 @@ def save_manifest(run_dir: pathlib.Path, args: argparse.Namespace, started_ts: f
         bar_builder_config["value_limit"] = args.bar_value_limit
     if getattr(args, "bar_imbal_limit", None):
         bar_builder_config["imbal_limit"] = args.bar_imbal_limit
+    if getattr(args, "bar_imbal_mode", None):
+        bar_builder_config["imbal_mode"] = args.bar_imbal_mode
     bar_builder_config["policy"] = getattr(args, "bar_policy", "any")
 
     manifest = {
@@ -119,4 +147,4 @@ def save_manifest(run_dir: pathlib.Path, args: argparse.Namespace, started_ts: f
         "dashboard_port": getattr(args, "dashboard_port", None),
         "script": "tools.live.run_binance",
     }
-    (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    _atomic_json_write(run_dir / "manifest.json", manifest)

@@ -1,5 +1,6 @@
 """Componente del gráfico OHLC con dimensiones fijas."""
 
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -418,7 +419,8 @@ def render_volume_chart(run_dir: str, timeframe: str, width: int = 900, height: 
 
 def render_ohlc_volume(run_dir: str, timeframe: str, width: int = 900, height: int = 600):
     """Renderiza OHLC + Volumen como un solo gráfico (subplots) sin separación."""
-    data_file = Path(run_dir) / "data.csv"
+    data_file = Path(run_dir) / "chart.csv"
+    trades_file = Path(run_dir) / "trades.csv"
 
     placeholder = st.empty()
 
@@ -460,6 +462,54 @@ def render_ohlc_volume(run_dir: str, timeframe: str, width: int = 900, height: i
             "#0ecb81" if row["close"] >= row["open"] else "#f6465d"
             for _, row in df_resampled.iterrows()
         ]
+        # Map timeframe to approximate second span for marker matching
+        tf_seconds = {
+            "1s": 1,
+            "5s": 5,
+            "10s": 10,
+            "30s": 30,
+            "1m": 60,
+            "5m": 300,
+            "1h": 3600,
+        }.get(timeframe, 60)
+
+        buy_markers: dict[str, list] = {"x": [], "y": [], "text": []}
+        sell_markers: dict[str, list] = {"x": [], "y": [], "text": []}
+        bar_ts = df_resampled["timestamp"].to_numpy(dtype=float)
+        if trades_file.exists() and len(bar_ts) > 0:
+            try:
+                trades_df = pd.read_csv(trades_file)
+            except Exception:
+                trades_df = None
+            if trades_df is not None and not trades_df.empty:
+                recent_trades = trades_df.tail(500)
+                for _, trade in recent_trades.iterrows():
+                    try:
+                        trade_ts = float(trade.get("timestamp", 0.0))
+                    except Exception:
+                        continue
+                    if trade_ts <= 0:
+                        continue
+                    idx = int(np.abs(bar_ts - trade_ts).argmin())
+                    if idx < 0 or idx >= len(df_resampled):
+                        continue
+                    # asegurar que el trade cae dentro del rango visible
+                    if abs(bar_ts[idx] - trade_ts) > max(1.0, tf_seconds):
+                        continue
+                    bar_row = df_resampled.iloc[idx]
+                    side = str(trade.get("side", "")).upper()
+                    price = float(trade.get("price", bar_row["close"]))
+                    qty = float(trade.get("qty", 0.0))
+                    reason = str(trade.get("reason", ""))
+                    hover = (
+                        f"{side} {qty:.4f} @ {price:,.2f}<br>"
+                        f"{datetime.fromtimestamp(trade_ts).strftime('%H:%M:%S')}<br>{reason}"
+                    )
+                    target = buy_markers if side == "BUY" else sell_markers
+                    y_anchor = bar_row["high"] if side == "BUY" else bar_row["low"]
+                    target["x"].append(idx)
+                    target["y"].append(y_anchor)
+                    target["text"].append(hover)
 
         # Rango de X
         x_max = len(df_resampled) - 1
@@ -505,6 +555,49 @@ def render_ohlc_volume(run_dir: str, timeframe: str, width: int = 900, height: i
                 row=2,
                 col=1,
             )
+
+            if buy_markers["x"]:
+                fig.add_trace(
+                    go.Scatter(
+                        x=buy_markers["x"],
+                        y=buy_markers["y"],
+                        mode="markers",
+                        marker=dict(
+                            symbol="triangle-up",
+                            size=14,
+                            color="#f0b90b",
+                            line=dict(color="#0b0e11", width=2),
+                            opacity=0.95,
+                        ),
+                        name="Buy",
+                        hovertext=buy_markers["text"],
+                        hoverinfo="text",
+                        showlegend=False,
+                    ),
+                    row=1,
+                    col=1,
+                )
+            if sell_markers["x"]:
+                fig.add_trace(
+                    go.Scatter(
+                        x=sell_markers["x"],
+                        y=sell_markers["y"],
+                        mode="markers",
+                        marker=dict(
+                            symbol="triangle-down",
+                            size=14,
+                            color="#ff6767",
+                            line=dict(color="#0b0e11", width=2),
+                            opacity=0.95,
+                        ),
+                        name="Sell",
+                        hovertext=sell_markers["text"],
+                        hoverinfo="text",
+                        showlegend=False,
+                    ),
+                    row=1,
+                    col=1,
+                )
 
             # Layout global
             fig.update_layout(

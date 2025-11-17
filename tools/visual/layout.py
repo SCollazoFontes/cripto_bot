@@ -3,12 +3,12 @@
 from pathlib import Path
 import time
 
+import pandas as pd
 import streamlit as st
 
 try:
     from tools.visual.chart_ohlc import render_ohlc_volume
     from tools.visual.components.decision_panel import render_decision_panel
-    from tools.visual.components.kpis_panel import render_kpis_panel
     from tools.visual.components.metrics_header import render_header
     from tools.visual.components.signal_panel import render_signal_panel
     from tools.visual.components.timeframe import render_timeframe_selector
@@ -16,7 +16,6 @@ try:
 except ModuleNotFoundError:
     from chart_ohlc import render_ohlc_volume
     from components.decision_panel import render_decision_panel
-    from components.kpis_panel import render_kpis_panel
     from components.metrics_header import render_header
     from components.signal_panel import render_signal_panel
     from components.timeframe import render_timeframe_selector
@@ -144,9 +143,33 @@ def render_dashboard(run_dir: str):
     tf_options = ["1s", "5s", "10s", "30s", "1m", "5m", "1h"]
     render_timeframe_selector(tf_options)
 
+    data_file = Path(run_dir) / "data.csv"
+    chart_file = Path(run_dir) / "chart.csv"
+
+    def _safe_read(path: Path) -> pd.DataFrame | None:
+        if not path.exists():
+            return None
+        try:
+            return pd.read_csv(path)
+        except Exception:
+            return None
+
+    df_micro = _safe_read(data_file)
+    df_chart = _safe_read(chart_file)
+
+    # Variable para controlar si hay datos nuevos
+    has_new_data = False
+
     # Inicializar contador de última fila procesada para evitar parpadeos
     if "last_row_count" not in st.session_state:
         st.session_state.last_row_count = 0
+
+    source_df = df_chart if df_chart is not None else df_micro
+    if source_df is not None:
+        current_row_count = len(source_df)
+        if current_row_count > st.session_state.last_row_count:
+            has_new_data = True
+            st.session_state.last_row_count = current_row_count
 
     # Layout principal: 2 columnas (gráfico ancho + panel info)
     col_main, col_info = st.columns([6.5, 2])
@@ -154,64 +177,32 @@ def render_dashboard(run_dir: str):
     # Nota: el bloque completo de "POSICIÓN" se renderiza más abajo como un único contenedor
 
     with col_main:
-        # Calcular métricas en tiempo real desde data.csv
-        data_file = Path(run_dir) / "data.csv"
+        metrics_df = df_chart if df_chart is not None else df_micro
 
-        # Variable para controlar si hay datos nuevos
-        has_new_data = False
+        if metrics_df is not None and not metrics_df.empty and len(metrics_df) >= 2:
+            current_price = metrics_df["close"].iloc[-1]
 
-        if data_file.exists():
-            import pandas as pd
+            session_start_price = metrics_df["close"].iloc[0]
+            price_change_pct = ((current_price - session_start_price) / session_start_price) * 100
 
-            df = pd.read_csv(data_file)
+            session_high = metrics_df["high"].max()
+            session_low = metrics_df["low"].min()
 
-            # Verificar si hay nuevas filas desde la última actualización
-            current_row_count = len(df)
-            if current_row_count > st.session_state.last_row_count:
-                has_new_data = True
-                st.session_state.last_row_count = current_row_count
+            last_timestamp_second = int(metrics_df["timestamp"].iloc[-1])
+            last_second_data = metrics_df[
+                metrics_df["timestamp"].apply(lambda x: int(x) == last_timestamp_second)
+            ]
+            last_volume_btc = last_second_data["volume"].sum()
+            last_avg_price = last_second_data["close"].mean()
+            last_volume = last_volume_btc * last_avg_price
 
-            if not df.empty and len(df) >= 2:
-                # Precio actual (último close)
-                current_price = df["close"].iloc[-1]
+            start_time = metrics_df["timestamp"].iloc[0]
+            current_time = metrics_df["timestamp"].iloc[-1]
+            elapsed_seconds = int(current_time - start_time)
+            elapsed_minutes = elapsed_seconds // 60
+            elapsed_secs = elapsed_seconds % 60
 
-                # Cambio % desde el inicio de la sesión
-                session_start_price = df["close"].iloc[0]
-                price_change_pct = (
-                    (current_price - session_start_price) / session_start_price
-                ) * 100
-
-                # Máximo y mínimo de la sesión
-                session_high = df["high"].max()
-                session_low = df["low"].min()
-
-                # Volumen del último segundo completo en USDT
-                last_timestamp_second = int(df["timestamp"].iloc[-1])
-                last_second_data = df[
-                    df["timestamp"].apply(lambda x: int(x) == last_timestamp_second)
-                ]
-                last_volume_btc = last_second_data["volume"].sum()
-                last_avg_price = last_second_data["close"].mean()
-                last_volume = last_volume_btc * last_avg_price
-
-                # Tiempo de ejecución
-                start_time = df["timestamp"].iloc[0]
-                current_time = df["timestamp"].iloc[-1]
-                elapsed_seconds = int(current_time - start_time)
-                elapsed_minutes = elapsed_seconds // 60
-                elapsed_secs = elapsed_seconds % 60
-
-                # Color para el cambio
-                change_color = "#0ecb81" if price_change_pct >= 0 else "#f6465d"
-            else:
-                current_price = 0.0
-                price_change_pct = 0.0
-                session_high = 0.0
-                session_low = 0.0
-                last_volume = 0.0
-                elapsed_minutes = 0
-                elapsed_secs = 0
-                change_color = "#848e9c"
+            change_color = "#0ecb81" if price_change_pct >= 0 else "#f6465d"
         else:
             current_price = 0.0
             price_change_pct = 0.0
@@ -243,6 +234,8 @@ def render_dashboard(run_dir: str):
         # Leer datos de equity
         equity_file = Path(run_dir) / "equity.csv"
         trades_file = Path(run_dir) / "trades.csv"
+        eq_df: pd.DataFrame | None = None
+        tr_df: pd.DataFrame | None = None
 
         current_qty = 0.0
         current_equity = 10000.0
@@ -254,10 +247,11 @@ def render_dashboard(run_dir: str):
         initial_cash = 10000.0
 
         if equity_file.exists():
-            import pandas as pd
-
-            eq_df = pd.read_csv(equity_file)
-            if not eq_df.empty:
+            try:
+                eq_df = pd.read_csv(equity_file)
+            except Exception:
+                eq_df = None
+            if eq_df is not None and not eq_df.empty:
                 last_eq = eq_df.iloc[-1]
                 current_qty = last_eq.get("qty", 0.0)
                 current_equity = last_eq.get("equity", 10000.0)
@@ -270,10 +264,11 @@ def render_dashboard(run_dir: str):
                 )
 
         if trades_file.exists() and current_qty > 0:
-            import pandas as pd
-
-            tr_df = pd.read_csv(trades_file)
-            if not tr_df.empty:
+            try:
+                tr_df = pd.read_csv(trades_file)
+            except Exception:
+                tr_df = None
+            if tr_df is not None and not tr_df.empty:
                 tr_df["side_norm"] = tr_df["side"].astype(str).str.upper()
                 buys = tr_df[tr_df["side_norm"] == "BUY"]
                 if not buys.empty:
@@ -322,109 +317,8 @@ def render_dashboard(run_dir: str):
 
         st.markdown(pos_block_html, unsafe_allow_html=True)
 
-        # Señal estrategia - Calcular usando el módulo de señales
-        manifest_file = Path(run_dir) / "manifest.json"
-        signal_value = 0.0
-        zone_text = "NEUTRAL"
-        signal_metadata = {}
-        strategy_name = "momentum"  # default
-
-        if manifest_file.exists():
-            import json
-
-            with open(manifest_file) as f:
-                manifest = json.load(f)
-                strategy_name = manifest.get("strategy", "momentum")
-                params = manifest.get("params", {})
-
-        # Calcular señal usando el sistema modular
-        if data_file.exists() and not df.empty:
-            from pathlib import Path as P
-            import sys
-
-            # Asegurar que src esté en el path
-            src_path = P(__file__).parent.parent.parent / "src"
-            if str(src_path) not in sys.path:
-                sys.path.insert(0, str(src_path))
-
-            try:
-                from strategies.signals import calculate_signal
-
-                signal_value, zone_text, signal_metadata = calculate_signal(
-                    strategy_name=strategy_name,
-                    df=df,
-                    params=params if manifest_file.exists() else None,
-                )
-            except Exception as e:
-                # Fallback: señal neutral
-                signal_value = 0.0
-                zone_text = "ERROR"
-                signal_metadata = {"error": str(e)}
-
-        # Calcular posición del marcador en la barra (0-100%)
-        # Escala -1 a +1 → 0% a 100%
-        marker_position = ((signal_value + 1) / 2) * 100
-
-        # Determinar color del valor según la zona
-        if signal_value >= 0.5:
-            signal_color = "#0ecb81"  # Verde
-        elif signal_value <= -0.5:
-            signal_color = "#f6465d"  # Rojo
-        else:
-            signal_color = "#848e9c"  # Gris neutral
-
-        # Calcular posiciones de thresholds para la visualización
-        # Usar entry_threshold como referencia
-        if manifest_file.exists():
-            manifest_params = manifest.get("params", {})
-            entry_threshold = manifest_params.get("entry_threshold", 0.001)
-            exit_threshold = manifest_params.get("exit_threshold", entry_threshold * 0.5)
-        else:
-            entry_threshold = 0.001
-            exit_threshold = 0.0005
-
-        # Normalizar thresholds a escala -1 a +1
-        max_signal = entry_threshold * 3
-        long_threshold_norm = min(1.0, entry_threshold / max_signal)
-        short_threshold_norm = -long_threshold_norm
-
-        # Calcular posiciones de los thresholds en la barra (0-100%)
-        long_threshold_pos = ((long_threshold_norm + 1) / 2) * 100
-        short_threshold_pos = ((short_threshold_norm + 1) / 2) * 100
-
-        signal_block_html = (
-            '<div style="padding: 0px 8px; margin-top: 12px; margin-bottom: 0px;">'
-            '  <div style="display: flex; align-items: center; justify-content: center; '
-            'height: 20px;">'
-            '    <span style="color: #f0b90b; font-size: 16px; font-weight: 700; '
-            'letter-spacing: 0.5px;">SEÑAL ESTRATEGIA</span>'
-            "  </div>"
-            '  <div style="text-align: center; margin-top: 8px; margin-bottom: 8px;">'
-            f'    <div style="color: {signal_color}; font-size: 24px; font-weight: 700; '
-            f'line-height: 1.2;">{signal_value:+.4f}</div>'
-            f'    <div style="color: {signal_color}; font-size: 12px; font-weight: 600; '
-            f'margin-top: 2px;">{zone_text}</div>'
-            "  </div>"
-            '  <div style="position: relative; height: 20px; background: '
-            "linear-gradient(to right, "
-            f"    #f6465d 0%, #f6465d {short_threshold_pos}%, "
-            f"    #2b3139 {short_threshold_pos}%, #2b3139 {long_threshold_pos}%, "
-            f"    #0ecb81 {long_threshold_pos}%, #0ecb81 100%); "
-            '    border-radius: 4px; margin: 8px 0px;">'
-            f'    <div style="position: absolute; left: {marker_position}%; top: 50%; '
-            "transform: translate(-50%, -50%); "
-            "      width: 8px; height: 8px; background-color: #ffffff; border: 2px solid #0b0e11; "
-            '      border-radius: 50%; box-shadow: 0 0 4px rgba(255,255,255,0.6);"></div>'
-            "  </div>"
-            '  <div style="display: flex; justify-content: space-between; margin-top: 4px;">'
-            f'    <span style="color: #848e9c; font-size: 14px;">Short: {short_threshold_norm:+.4f}</span>'
-            f'    <span style="color: #848e9c; font-size: 14px;">Long: {long_threshold_norm:+.4f}</span>'
-            "  </div>"
-            "</div>"
-        )
-
         # Señal y barra visuales
-        render_signal_panel(run_dir, df if "df" in locals() else None)
+        render_signal_panel(run_dir, df_micro)
 
         # KPIs internos
         # TODO: Obtener valores reales de la estrategia cuando estén disponibles
@@ -481,102 +375,9 @@ def render_dashboard(run_dir: str):
             "</div>"
         )
 
-        render_kpis_panel()
+        st.markdown(kpis_block_html, unsafe_allow_html=True)
 
-        # Decisión del bot - Leer último trade
-        last_action = "—"
-        last_action_time = "—"
-        last_reason = "—"
-        last_pnl = "—"
-        last_position = "—"
-
-        if trades_file.exists():
-            from datetime import datetime
-
-            import pandas as pd
-
-            tr_df = pd.read_csv(trades_file)
-            if not tr_df.empty:
-                last_trade = tr_df.iloc[-1]
-
-                # Acción y precio
-                side = last_trade.get("side", "").upper()
-                trade_price = last_trade.get("price", 0.0)
-                trade_qty = last_trade.get("qty", 0.0)
-
-                # Hora del trade
-                trade_ts = last_trade.get("timestamp", 0.0)
-                if trade_ts > 0:
-                    trade_time = datetime.fromtimestamp(trade_ts).strftime("%H:%M:%S")
-                    last_action_time = trade_time
-
-                last_action = f"{side} @ {trade_price:,.2f}"
-
-                # Motivo
-                reason = last_trade.get("reason", "—")
-                if reason and reason != "—":
-                    # Simplificar motivo para display compacto
-                    if "entry" in reason.lower() or "signal" in reason.lower():
-                        last_reason = "señal > thr long"
-                    elif "exit" in reason.lower():
-                        last_reason = "señal < thr exit"
-                    elif "stop" in reason.lower():
-                        last_reason = "stop loss"
-                    elif "profit" in reason.lower():
-                        last_reason = "take profit"
-                    else:
-                        last_reason = reason[:30]  # Truncar si es muy largo
-                else:
-                    last_reason = "—"
-
-                # PnL de la acción (diferencia de equity antes/después si hay más de 1 trade)
-                if len(tr_df) >= 2:
-                    prev_equity = tr_df.iloc[-2].get("equity", 10000.0)
-                    curr_equity = last_trade.get("equity", 10000.0)
-                    action_pnl = curr_equity - prev_equity
-                    pnl_sign = "+" if action_pnl >= 0 else ""
-                    last_pnl = f"{pnl_sign}{action_pnl:.2f} USDT"
-                else:
-                    last_pnl = "0.00 USDT"
-
-                # Nueva posición resultante
-                last_position = f"{trade_qty:.4f} BTC" if side == "BUY" else "0.0000 BTC"
-
-        decision_block_html = (
-            '<div style="padding: 0px 8px; margin-top: 16px; margin-bottom: 0px;">'
-            '  <div style="display: flex; align-items: center; justify-content: center; '
-            'height: 20px;">'
-            '    <span style="color: #f0b90b; font-size: 14px; font-weight: 700; '
-            'letter-spacing: 0.5px;">DECISIÓN DEL BOT</span>'
-            "  </div>"
-            '  <div style="border-bottom: 1px solid #2b3139; margin: 6px 0px;"></div>'
-            '  <div style="margin-top: 8px;">'
-            # Acción
-            '    <div style="margin-bottom: 6px;">'
-            '      <span style="color: #848e9c; font-size: 12px;">Acción: </span>'
-            f'      <span style="color: #ffffff; font-size: 12px; font-weight: 600;">{last_action}</span>'
-            f'      <span style="color: #848e9c; font-size: 11px;"> ({last_action_time})</span>'
-            "    </div>"
-            # Motivo
-            '    <div style="margin-bottom: 6px;">'
-            '      <span style="color: #848e9c; font-size: 12px;">Motivo: </span>'
-            f'      <span style="color: #ffffff; font-size: 12px;">{last_reason}</span>'
-            "    </div>"
-            # PnL acción
-            '    <div style="margin-bottom: 6px;">'
-            '      <span style="color: #848e9c; font-size: 12px;">PNL acción: </span>'
-            f'      <span style="color: #ffffff; font-size: 12px; font-weight: 600;">{last_pnl}</span>'
-            "    </div>"
-            # Nueva posición
-            "    <div>"
-            '      <span style="color: #848e9c; font-size: 12px;">Nueva posición: </span>'
-            f'      <span style="color: #ffffff; font-size: 12px; font-weight: 600;">{last_position}</span>'
-            "    </div>"
-            "  </div>"
-            "</div>"
-        )
-
-        render_decision_panel(run_dir)
+        render_decision_panel(run_dir, df_micro, tr_df)
 
     # Auto-refresh
     if has_new_data:

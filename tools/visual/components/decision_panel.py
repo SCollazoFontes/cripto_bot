@@ -7,86 +7,96 @@ import pandas as pd
 import streamlit as st
 
 
-def render_decision_panel(run_dir: str) -> None:
+def _format_reason(reason: str) -> str:
+    rl = reason.lower()
+    if "entry" in rl or "signal" in rl:
+        return "Entrada señal"
+    if "exit" in rl:
+        return "Salida señal"
+    if "stop" in rl:
+        return "Stop loss"
+    if "profit" in rl:
+        return "Take profit"
+    return reason[:40]
+
+
+def render_decision_panel(
+    run_dir: str,
+    df_bars: pd.DataFrame | None,
+    trades_df: pd.DataFrame | None,
+) -> None:
     trades_file = Path(run_dir) / "trades.csv"
+    if trades_df is None:
+        try:
+            trades_df = pd.read_csv(trades_file)
+        except Exception:
+            trades_df = None
 
-    last_action = "—"
-    last_action_time = "—"
-    last_reason = "—"
-    last_pnl = "—"
-    last_position = "—"
-
-    if trades_file.exists():
-        tr_df = pd.read_csv(trades_file)
-        if not tr_df.empty:
-            last_trade = tr_df.iloc[-1]
-
-            side = str(last_trade.get("side", "")).upper()
-            trade_price = float(last_trade.get("price", 0.0))
-            trade_qty = float(last_trade.get("qty", 0.0))
-
-            trade_ts = float(last_trade.get("timestamp", 0.0))
-            if trade_ts > 0:
-                trade_time = datetime.fromtimestamp(trade_ts).strftime("%H:%M:%S")
-                last_action_time = trade_time
-
-            last_action = f"{side} @ {trade_price:,.2f}"
-
-            reason = last_trade.get("reason", "—")
-            if reason and reason != "—":
-                rl = str(reason).lower()
-                if "entry" in rl or "signal" in rl:
-                    last_reason = "señal > thr long"
-                elif "exit" in rl:
-                    last_reason = "señal < thr exit"
-                elif "stop" in rl:
-                    last_reason = "stop loss"
-                elif "profit" in rl:
-                    last_reason = "take profit"
-                else:
-                    last_reason = str(reason)[:30]
-            else:
-                last_reason = "—"
-
-            if len(tr_df) >= 2:
-                prev_equity = float(tr_df.iloc[-2].get("equity", 10000.0))
-                curr_equity = float(last_trade.get("equity", 10000.0))
-                action_pnl = curr_equity - prev_equity
-                pnl_sign = "+" if action_pnl >= 0 else ""
-                last_pnl = f"{pnl_sign}{action_pnl:.2f} USDT"
-            else:
-                last_pnl = "0.00 USDT"
-
-            last_position = f"{trade_qty:.4f} BTC" if side == "BUY" else "0.0000 BTC"
-
-    decision_block_html = (
-        '<div style="padding: 0px 8px; margin-top: 16px; margin-bottom: 0px;">'
-        '  <div style="display: flex; align-items: center; justify-content: center; '
-        'height: 20px;">'
-        '    <span style="color: #f0b90b; font-size: 14px; font-weight: 700; '
-        'letter-spacing: 0.5px;">DECISIÓN DEL BOT</span>'
+    st.markdown(
+        '<div style="padding: 0px 8px; margin-top: 16px;">'
+        '  <div style="display: flex; align-items: center; justify-content: center; height: 20px;">'
+        '    <span style="color: #f0b90b; font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">'
+        "    DECISIONES DEL BOT</span>"
         "  </div>"
         '  <div style="border-bottom: 1px solid #2b3139; margin: 6px 0px;"></div>'
-        '  <div style="margin-top: 8px;">'
-        '    <div style="margin-bottom: 6px;">'
-        '      <span style="color: #848e9c; font-size: 12px;">Acción: </span>'
-        f'      <span style="color: #ffffff; font-size: 12px; font-weight: 600;">{last_action}</span>'
-        f'      <span style="color: #848e9c; font-size: 11px;"> ({last_action_time})</span>'
-        "    </div>"
-        '    <div style="margin-bottom: 6px;">'
-        '      <span style="color: #848e9c; font-size: 12px;">Motivo: </span>'
-        f'      <span style="color: #ffffff; font-size: 12px;">{last_reason}</span>'
-        "    </div>"
-        '    <div style="margin-bottom: 6px;">'
-        '      <span style="color: #848e9c; font-size: 12px;">PNL acción: </span>'
-        f'      <span style="color: #ffffff; font-size: 12px; font-weight: 600;">{last_pnl}</span>'
-        "    </div>"
-        "    <div>"
-        '      <span style="color: #848e9c; font-size: 12px;">Nueva posición: </span>'
-        f'      <span style="color: #ffffff; font-size: 12px; font-weight: 600;">{last_position}</span>'
-        "    </div>"
-        "  </div>"
-        "</div>"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
-    st.markdown(decision_block_html, unsafe_allow_html=True)
+    if trades_df is None or trades_df.empty:
+        st.markdown(
+            '<div style="color: #848e9c; font-size: 12px; text-align: center;">'
+            "Sin operaciones registradas en esta sesión.</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    last_trades = trades_df.tail(3).iloc[::-1].copy()
+
+    rows = []
+    for _, trade in last_trades.iterrows():
+        side = str(trade.get("side", "")).upper()
+        price = float(trade.get("price", 0.0))
+        qty = float(trade.get("qty", 0.0))
+        ts = float(trade.get("timestamp", 0.0))
+        time_label = datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts > 0 else "—"
+
+        reason = str(trade.get("reason", "—"))
+        reason_fmt = _format_reason(reason) if reason and reason != "—" else "—"
+
+        pnl = 0.0
+        pnl_display = "0.00 USDT"
+        idx = trade.name
+        if idx > 0:
+            prev = trades_df.iloc[idx - 1]
+            prev_equity = float(prev.get("equity", 0.0))
+            curr_equity = float(trade.get("equity", prev_equity))
+            pnl = curr_equity - prev_equity
+            pnl_display = f"{'+' if pnl >= 0 else ''}{pnl:.2f} USDT"
+
+        rows.append(
+            {
+                "time": time_label,
+                "side": side,
+                "price": f"{price:,.2f}",
+                "qty": f"{qty:.4f}",
+                "pnl": pnl_display,
+                "reason": reason_fmt,
+            }
+        )
+
+    table_html = ["<div style='padding: 0 8px;'>"]
+    for row in rows:
+        color = "#0ecb81" if row["side"] == "BUY" else "#f6465d"
+        table_html.append(
+            "<div style='border: 1px solid #2b3139; border-radius: 4px; padding: 8px; margin-bottom: 6px;'>"
+            f"<div style='display:flex; justify-content:space-between; font-size:12px; color:#848e9c;'>"
+            f"<span>{row['time']}</span><span>{row['reason']}</span></div>"
+            f"<div style='display:flex; justify-content:space-between; align-items:center; margin-top:4px;'>"
+            f"<span style='color:{color}; font-size:14px; font-weight:600;'>{row['side']} {row['qty']} BTC</span>"
+            f"<span style='color:#ffffff; font-size:14px;'>@ {row['price']}</span>"
+            f"<span style='color:#ffffff; font-size:13px;'>{row['pnl']}</span>"
+            "</div></div>"
+        )
+    table_html.append("</div>")
+    st.markdown("\n".join(table_html), unsafe_allow_html=True)

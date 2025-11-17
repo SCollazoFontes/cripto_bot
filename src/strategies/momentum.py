@@ -1,160 +1,311 @@
 # src/strategies/momentum.py
+"""
+Momentum Strategy con filtros avanzados (ex MomentumV2).
+
+Incluye:
+- Lookback adaptativo según volatilidad
+- Confirmación de tendencia (filtro de ruido)
+- Stop loss y take profit dinámicos
+- Filtro de volatilidad (no operar en whipsaw)
+- Cooldown entre trades (evitar overtrading)
+- Gestión de posición conservadora
+
+Objetivo: Reducir overtrading y mejorar win rate manteniendo la firma `momentum`.
+"""
+
 from __future__ import annotations
 
 from collections import deque
 from typing import Any
 
 from core.execution.costs import CostModel
-from strategies.base import (
-    Strategy,
-    register_strategy,
-    will_exit_non_negative,
-)
+from strategies.base import Strategy, register_strategy, will_exit_non_negative
 
 
 @register_strategy("momentum")
 class MomentumStrategy(Strategy):
     """
-    Momentum muy ligero sobre la desviación del precio actual respecto a la
-    media simple de los últimos `lookback_ticks`.
+    Estrategia de momentum mejorada con filtros y gestión de riesgo.
 
-    NOTA IMPORTANTE (live/paper):
-    - Esta implementación usa la firma preferida por el engine:
-        on_bar(broker, executor, symbol, bar)
-      y ejecuta órdenes vía `executor`, para que el engine actualice Portfolio
-      y escriba equity/trades con el pipeline existente.
+    Parámetros:
+    -----------
+    lookback_ticks : int
+        Ventana para calcular media móvil (default: 20, balanced)
+    entry_threshold : float
+        Cambio % mínimo para entrada (default: 0.002 = 0.2%, balanced)
+    exit_threshold : float
+        Cambio % para salida (default: 0.001 = 0.1%)
+    qty_frac : float
+        Fracción del capital disponible (default: 1.0 = 100% del cash) usada como techo.
+    stop_loss_pct : float
+        Stop loss en % desde entrada (default: 0.015 = 1.5%)
+    take_profit_pct : float
+        Take profit en % desde entrada (default: 0.025 = 2.5%)
+    order_notional : float
+        Notional fijo en USD por operación (default: 5.0, mínimo de Binance spot).
+    volatility_window : int
+        Ventana para calcular volatilidad (default: 50)
+    min_volatility : float
+        Volatilidad mínima para operar (default: 0.0003 = 0.03%)
+    max_volatility : float
+        Volatilidad máxima para operar (default: 0.025 = 2.5%)
+    cooldown_bars : int
+        Barras de espera después de cerrar posición (default: 3)
+    trend_confirmation : bool
+        Requiere confirmación de tendencia (default: True)
     """
 
     name = "momentum"
 
     def __init__(
         self,
-        lookback_ticks: int = 6,
-        entry_threshold: float = 5e-5,
-        exit_threshold: float = 2e-5,
-        qty_frac: float = 0.10,
+        lookback_ticks: int = 12,  # Más corto → aún más reactivo
+        entry_threshold: float = 0.0002,  # 0.02% → dispara más entradas
+        exit_threshold: float = 0.00015,  # 0.015% → salidas moderadas
+        qty_frac: float = 1.0,
+        order_notional: float = 5.0,
+        stop_loss_pct: float = 0.015,  # Aumentado de 0.01 → dar más margen
+        take_profit_pct: float = 0.025,  # Aumentado de 0.02 → buscar más profit
+        volatility_window: int = 50,
+        min_volatility: float = 0.0001,  # 0.01% → operar en mercados muy calmados
+        max_volatility: float = 0.025,  # Aumentado de 0.02 → tolerar más volatilidad
+        cooldown_bars: int = 3,  # Reducido de 5 → menos espera
+        trend_confirmation: bool = True,
         debug: bool = False,
-        min_edge_bps: float = 0.0,  # Umbral mínimo de edge vs coste (en bps sobre notional)
         cost_model: CostModel | None = None,
-        **_: Any,
+        **kwargs: Any,
     ) -> None:
+        # Soporte de compatibilidad: permitir `params={...}` además de kwargs directos
+        params = kwargs.get("params")
+        if isinstance(params, dict):
+            lookback_ticks = int(params.get("lookback_ticks", lookback_ticks))
+            entry_threshold = float(params.get("entry_threshold", entry_threshold))
+            exit_threshold = float(params.get("exit_threshold", exit_threshold))
+            qty_frac = float(params.get("qty_frac", qty_frac))
+            stop_loss_pct = float(params.get("stop_loss_pct", stop_loss_pct))
+            take_profit_pct = float(params.get("take_profit_pct", take_profit_pct))
+            order_notional = float(params.get("order_notional", order_notional))
+            volatility_window = int(params.get("volatility_window", volatility_window))
+            min_volatility = float(params.get("min_volatility", min_volatility))
+            max_volatility = float(params.get("max_volatility", max_volatility))
+            cooldown_bars = int(params.get("cooldown_bars", cooldown_bars))
+            trend_confirmation = bool(params.get("trend_confirmation", trend_confirmation))
+            debug = bool(params.get("debug", debug))
+
+        # Parámetros core
         self.lookback_ticks = int(lookback_ticks)
         self.entry_threshold = float(entry_threshold)
         self.exit_threshold = float(exit_threshold)
         self.qty_frac = float(qty_frac)
+        self.order_notional = float(order_notional)
+
+        # Gestión de riesgo
+        self.stop_loss_pct = float(stop_loss_pct)
+        self.take_profit_pct = float(take_profit_pct)
+
+        # Filtros
+        self.volatility_window = int(volatility_window)
+        self.min_volatility = float(min_volatility)
+        self.max_volatility = float(max_volatility)
+        self.cooldown_bars = int(cooldown_bars)
+        self.trend_confirmation = bool(trend_confirmation)
+
         self.debug = bool(debug)
-        self.min_edge_bps = float(min_edge_bps)
         self._cost_model: CostModel | None = cost_model
 
-        self._win: deque[float] = deque(maxlen=self.lookback_ticks)
-        self._in_pos: bool = False  # estado interno simple, opcional
-        self._pos_qty: float = 0.0  # tracking opcional (el portfolio real lo lleva el broker)
-        self._entry_price: float | None = None
-
-    # -------------------------- utilidades internas -------------------------
+        # Estado interno
+        self._price_window: deque[float] = deque(maxlen=max(lookback_ticks, volatility_window))
+        self._in_pos: bool = False
+        self._pos_qty: float = 0.0
+        self._entry_price: float = 0.0
+        self._bars_since_exit: int = 0
+        self._total_bars: int = 0
 
     def _log(self, msg: str) -> None:
         if self.debug:
             print(f"[Momentum] {msg}")
 
-    # --------------------------- firma live/paper ----------------------------
+    def _calculate_volatility(self) -> float:
+        """Calcula volatilidad como desviación estándar de retornos."""
+        if len(self._price_window) < 2:
+            return 0.0
+
+        prices = list(self._price_window)
+        returns = [(prices[i] - prices[i - 1]) / prices[i - 1] for i in range(1, len(prices))]
+
+        if not returns:
+            return 0.0
+
+        mean_return = sum(returns) / len(returns)
+        variance = sum((r - mean_return) ** 2 for r in returns) / len(returns)
+        return variance**0.5
+
+    def _check_trend_confirmation(self, price: float, mean: float, momentum: float) -> bool:
+        """
+        Confirma tendencia comparando precio actual vs media de largo plazo.
+
+        Evita entradas en reversiones falsas o whipsaws.
+        """
+        if len(self._price_window) < self.lookback_ticks * 2:
+            return True  # No suficiente historia, permitir
+
+        # Media de corto plazo (lookback_ticks)
+        short_mean = mean
+
+        # Media de largo plazo (2x lookback_ticks)
+        long_window = list(self._price_window)[-self.lookback_ticks * 2 :]
+        long_mean = sum(long_window) / len(long_window) if long_window else mean
+
+        # Confirmación: momentum corto y largo deben estar alineados
+        if momentum > 0:  # Intento de compra
+            return short_mean > long_mean  # Media corta > media larga
+        else:  # Intento de venta
+            return short_mean < long_mean
+
+    def _check_stop_loss(self, current_price: float) -> bool:
+        """Verifica si se activó el stop loss."""
+        if not self._in_pos or self._entry_price == 0:
+            return False
+
+        loss_pct = (current_price - self._entry_price) / self._entry_price
+        return loss_pct < -self.stop_loss_pct
+
+    def _check_take_profit(self, current_price: float) -> bool:
+        """Verifica si se alcanzó el take profit."""
+        if not self._in_pos or self._entry_price == 0:
+            return False
+
+        profit_pct = (current_price - self._entry_price) / self._entry_price
+        return profit_pct > self.take_profit_pct
 
     def on_bar_live(self, broker, executor, symbol: str, bar: dict[str, Any]) -> None:
-        """
-        El engine live/paper llama primero a esta firma. Aquí debemos:
-          1) Actualizar ventana y calcular mom.
-          2) Decidir entrada/salida.
-          3) Ejecutar vía executor (NO devolver OrderRequest).
-        """
+        """Lógica principal de trading."""
         price = float(bar["close"])
-        self._win.append(price)
+        self._price_window.append(price)
+        self._total_bars += 1
 
-        if len(self._win) < self.lookback_ticks:
-            self._log(f"warmup {len(self._win)}/{self.lookback_ticks}, price={price:.2f}")
+        # Incrementar cooldown
+        if not self._in_pos:
+            self._bars_since_exit += 1
+
+        # Warmup
+        if len(self._price_window) < self.lookback_ticks:
+            self._log(f"Warmup {len(self._price_window)}/{self.lookback_ticks}")
             return
 
-        mean = sum(self._win) / len(self._win)
+        # Calcular indicadores
+        mean = sum(list(self._price_window)[-self.lookback_ticks :]) / self.lookback_ticks
         if mean <= 0.0:
             return
 
-        mom = (price - mean) / mean
+        momentum = (price - mean) / mean
+        volatility = self._calculate_volatility()
 
-        # Estado real: usamos broker para cash/posición actual
+        # Obtener estado del broker
         try:
-            cash: float = float(broker.cash)
+            cash = float(broker.cash)
+            current_qty = float(broker.position_qty)
         except Exception:
-            # fallback razonable si el broker no expone 'cash'
-            cash = float(getattr(self, "_available_usdt", 10_000.0))
+            cash = 10_000.0
+            current_qty = self._pos_qty
 
-        try:
-            current_qty: float = float(broker.position_qty)
-        except Exception:
-            current_qty = self._pos_qty  # fallback a nuestro tracking
-
-        # Logs de diagnóstico
+        # Log de estado
         self._log(
-            f"price={price:.2f} mean={mean:.2f} mom={mom:+.6f} "
-            f"in_pos={self._in_pos} broker_qty={current_qty:.6f} cash={cash:.2f}"
+            f"Bar {self._total_bars} | Price: ${price:.2f} | Mom: {momentum:+.4f} | "
+            f"Vol: {volatility:.4f} | InPos: {self._in_pos} | Cooldown: {self._bars_since_exit}"
         )
 
-        # ------------------------- Reglas de trading -------------------------
+        # ==================== GESTIÓN DE POSICIÓN ABIERTA ====================
 
-        # Entrada: no en posición y momentum por encima del umbral
-        if (not self._in_pos) and (mom > self.entry_threshold):
-            notional = max(0.0, cash * self.qty_frac)
-            qty = 0.0 if price <= 0.0 else (notional / price)
-            if qty > 0.0:
-                if self._is_profitable(side="BUY", price=price, qty=qty, mom=mom):
-                    self._log(f"ENTRY {symbol} qty={qty:.6f} notional≈{notional:.2f}")
-                    executor.market_buy(symbol, qty)
-                    self._in_pos = True
-                    self._pos_qty = qty  # tracking opcional
-                    self._entry_price = price
-                else:
-                    self._log("SKIP ENTRY por coste >= edge")
+        if self._in_pos:
+            # 1. Check stop loss
+            if self._check_stop_loss(price):
+                qty = current_qty if current_qty > 0 else self._pos_qty
+                if qty > 0:
+                    self._log(f"🛑 STOP LOSS @ ${price:.2f} (entry: ${self._entry_price:.2f})")
+                    executor.market_sell(symbol, qty)
+                    self._in_pos = False
+                    self._pos_qty = 0.0
+                    self._bars_since_exit = 0
+                return
 
-            return  # importante: no seguimos evaluando salida en el mismo tick
+            # 2. Check take profit
+            if self._check_take_profit(price):
+                qty = current_qty if current_qty > 0 else self._pos_qty
+                if qty > 0:
+                    self._log(f"🎯 TAKE PROFIT @ ${price:.2f} (entry: ${self._entry_price:.2f})")
+                    executor.market_sell(symbol, qty)
+                    self._in_pos = False
+                    self._pos_qty = 0.0
+                    self._bars_since_exit = 0
+                return
 
-        # Salida: en posición y momentum por debajo del umbral (en negativo)
-        if self._in_pos and (mom < -self.exit_threshold):
-            qty_to_close = current_qty if current_qty > 0.0 else self._pos_qty
-            if qty_to_close > 0.0:
-                # Salida solo si no realiza pérdida neta tras costes
-                if will_exit_non_negative(
-                    broker,
-                    entry_side="LONG",
-                    entry_price=self._entry_price,
-                    current_price=price,
-                    qty=qty_to_close,
-                ) and self._is_profitable(side="SELL", price=price, qty=qty_to_close, mom=-mom):
-                    self._log(f"EXIT {symbol} qty={qty_to_close:.6f}")
-                    executor.market_sell(symbol, qty_to_close)
-                else:
-                    self._log("SKIP EXIT por coste (no rentable neto)")
-            self._in_pos = False
-            self._pos_qty = 0.0
-            self._entry_price = None
-            return
+            # 3. Exit normal (momentum reversal) — proteger contra salidas no rentables
+            if momentum < -self.exit_threshold:
+                qty = current_qty if current_qty > 0 else self._pos_qty
+                if qty > 0:
+                    if will_exit_non_negative(
+                        broker,
+                        entry_side="LONG",
+                        entry_price=self._entry_price,
+                        current_price=price,
+                        qty=qty,
+                    ):
+                        self._log(f"📉 EXIT (momentum reversal) @ ${price:.2f}")
+                        executor.market_sell(symbol, qty)
+                        self._in_pos = False
+                        self._pos_qty = 0.0
+                        self._bars_since_exit = 0
+                    else:
+                        self._log("⏸️  Skip EXIT: no rentable neto tras costes")
+                return
 
-        # Si no hay acción, terminamos silenciosamente
-        return
+        # ==================== EVALUACIÓN DE ENTRADA ====================
 
-    # ------------------- firma opcional para backtests simples ---------------
+        if not self._in_pos:
+            # 1. Check cooldown
+            if self._bars_since_exit < self.cooldown_bars:
+                self._log(f"⏳ Cooldown: {self._bars_since_exit}/{self.cooldown_bars}")
+                return
+
+            # 2. Check volatilidad
+            if volatility < self.min_volatility:
+                self._log(f"😴 Volatility too low: {volatility:.6f} < {self.min_volatility:.6f}")
+                return
+
+            if volatility > self.max_volatility:
+                self._log(f"🌊 Volatility too high: {volatility:.6f} > {self.max_volatility:.6f}")
+                return
+
+            # 3. Check momentum entry threshold
+            if momentum <= self.entry_threshold:
+                return
+
+            # 4. Check trend confirmation
+            if self.trend_confirmation:
+                if not self._check_trend_confirmation(price, mean, momentum):
+                    self._log("❌ Trend not confirmed (short/long MA misalignment)")
+                    return
+
+            # 5. Calcular tamaño de posición
+            available_cash = max(0.0, cash * self.qty_frac)
+            notional = min(self.order_notional, available_cash)
+            qty = notional / price if price > 0 else 0.0
+
+            if qty > 0:
+                self._log(
+                    f"🚀 ENTRY @ ${price:.2f} | Qty: {qty:.6f} | "
+                    f"Notional: ${notional:.2f} | Mom: {momentum:+.4f}"
+                )
+                executor.market_buy(symbol, qty)
+                self._in_pos = True
+                self._pos_qty = qty
+                self._entry_price = price
+                self._bars_since_exit = 0
 
     def on_bar_bar(self, bar: dict[str, Any]) -> None:
-        """
-        Para backtests antiguos que esperan on_bar(bar) devolviendo OrderRequest.
-        Aquí no devolvemos nada para forzar el uso del pipeline live/paper.
-        (Puedes implementar la misma lógica y devolver un OrderRequest si te
-        resulta útil en otro runner).
-        """
+        """Compatibilidad con backtests antiguos."""
         return None
-
-    # ------------------- coste vs edge ---------------------------------
-
-    def _is_profitable(self, side: str, price: float, qty: float, mom: float) -> bool:
-        """Filtro de rentabilidad desactivado. Siempre permite trades."""
-        return True
 
     @property
     def cost_model(self) -> CostModel | None:

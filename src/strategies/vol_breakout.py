@@ -40,10 +40,23 @@ class VolatilityBreakoutStrategy(Strategy):
         atr_period: int = 14,
         atr_mult: float = 0.5,
         stop_mult: float = 2.0,
-        qty_frac: float = 0.2,
+        qty_frac: float = 1.0,
+        order_notional: float = 5.0,
+        allow_short: bool = False,
         debug: bool = False,
-        **_: Any,
+        **kwargs: Any,
     ) -> None:
+        params = kwargs.get("params")
+        if isinstance(params, dict):
+            lookback = int(params.get("lookback", lookback))
+            atr_period = int(params.get("atr_period", atr_period))
+            atr_mult = float(params.get("atr_mult", atr_mult))
+            stop_mult = float(params.get("stop_mult", stop_mult))
+            qty_frac = float(params.get("qty_frac", qty_frac))
+            order_notional = float(params.get("order_notional", order_notional))
+            allow_short = bool(params.get("allow_short", allow_short))
+            debug = bool(params.get("debug", debug))
+
         self.position = PositionState()
         self.state: dict[str, Any] = {"atr": 0.0}
         self.highs: deque[float] = deque(maxlen=lookback)
@@ -54,6 +67,8 @@ class VolatilityBreakoutStrategy(Strategy):
         self.atr_mult = float(atr_mult)
         self.stop_mult = float(stop_mult)
         self.qty_frac = float(qty_frac)
+        self.order_notional = float(order_notional)
+        self.allow_short = bool(allow_short)
         self.debug = bool(debug)
 
     def _log(self, msg: str) -> None:
@@ -113,7 +128,8 @@ class VolatilityBreakoutStrategy(Strategy):
             if close > ch_high_prev + self.atr_mult * atr_val:
                 # Calcular tamaño
                 cash = float(getattr(broker, "cash", 0.0))
-                notional = cash * self.qty_frac
+                available_cash = max(0.0, cash * self.qty_frac)
+                notional = min(self.order_notional, available_cash)
                 qty = notional / close if close > 0 else 0.0
                 if qty > 0:
                     self._log(
@@ -125,9 +141,10 @@ class VolatilityBreakoutStrategy(Strategy):
                     self.position.entry_price = close
                 return
             # SHORT breakout
-            if close < ch_low_prev - self.atr_mult * atr_val:
+            if self.allow_short and close < ch_low_prev - self.atr_mult * atr_val:
                 cash = float(getattr(broker, "cash", 0.0))
-                notional = cash * self.qty_frac
+                available_cash = max(0.0, cash * self.qty_frac)
+                notional = min(self.order_notional, available_cash)
                 qty = notional / close if close > 0 else 0.0
                 if qty > 0:
                     self._log(

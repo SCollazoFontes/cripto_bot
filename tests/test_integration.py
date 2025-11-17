@@ -93,8 +93,7 @@ def test_broker_integration():
     """Test that brokers can be imported and created."""
     from brokers.binance_paper import BinancePaperBroker
 
-    # BinancePaperBroker doesn't take initial_usdt in __init__
-    # It has a default _usdt = 10_000.0
+    # BinancePaperBroker initializa con 100 USDT por defecto
     broker = BinancePaperBroker()
     assert broker is not None
 
@@ -102,7 +101,7 @@ def test_broker_integration():
     account = broker.get_account()
     assert account is not None
     assert "balances" in account
-    assert account["balances"]["USDT"]["free"] == 10000.0
+    assert account["balances"]["USDT"]["free"] == 100.0
 
 
 def test_full_pipeline_smoke():

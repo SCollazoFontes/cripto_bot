@@ -11,7 +11,7 @@ Uso:
         --symbol BTCUSDT \
         --testnet \
         --duration 600 \
-        --cash 10000 \
+        --cash 100 \
         --fees-bps 2.5 \
         --slip-bps 1.0
 """
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--symbol", default="BTCUSDT", help="Símbolo a tradear")
     p.add_argument("--testnet", action="store_true", help="Usar Binance Testnet")
     p.add_argument("--duration", type=int, default=600, help="Duración en segundos")
-    p.add_argument("--cash", type=float, default=10000.0, help="Capital inicial (USDT)")
+    p.add_argument("--cash", type=float, default=100.0, help="Capital inicial (USDT)")
     p.add_argument(
         "--fees-bps", type=float, default=10.0, help="Comisiones en bps (Binance: 10 bps = 0.1%%)"
     )

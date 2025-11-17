@@ -50,6 +50,8 @@ class VWAPReversionStrategy(Strategy):
         take_profit_pct: float = 0.006,
         stop_loss_pct: float = 0.004,
         qty_frac: float = 1.0,
+        order_notional: float = 5.0,
+        allow_short: bool = False,
         risk_pct: float | None = None,
         min_vol: float = 1e-12,
         warmup: int | None = None,
@@ -66,6 +68,8 @@ class VWAPReversionStrategy(Strategy):
             stop_loss_pct = float(params.get("stop_loss_pct", stop_loss_pct))
             qty_frac = float(params.get("qty_frac", qty_frac))
             risk_pct = params.get("risk_pct", risk_pct)
+            order_notional = float(params.get("order_notional", order_notional))
+            allow_short = bool(params.get("allow_short", allow_short))
             min_vol = float(params.get("min_vol", min_vol))
             warmup = int(params.get("warmup", warmup if warmup is not None else vwap_window))
 
@@ -78,6 +82,8 @@ class VWAPReversionStrategy(Strategy):
         # Tamaño histórico (compat) y riesgo porcentual basado en equity (nuevo)
         self.qty_frac: float = float(qty_frac)
         self.risk_pct: float | None = float(risk_pct) if risk_pct is not None else None
+        self.order_notional: float = float(order_notional)
+        self.allow_short: bool = bool(allow_short)
         self.min_vol: float = float(min_vol)
         self.warmup: int = int(warmup if warmup is not None else self.vwap_window)
         self.debug: bool = bool(debug)
@@ -96,6 +102,19 @@ class VWAPReversionStrategy(Strategy):
     def _log(self, msg: str) -> None:
         if self.debug:
             print(f"[VWAPReversion] {msg}")
+
+    def _compute_order_qty(self, price: float, broker: Any) -> float:
+        if price <= 0.0:
+            return 0.0
+        try:
+            cash = float(getattr(broker, "cash", 0.0))
+        except Exception:
+            cash = 0.0
+        available = max(0.0, cash * self.qty_frac)
+        target = min(self.order_notional, available)
+        if self.risk_pct is not None and cash > 0:
+            target = min(target, cash * float(self.risk_pct))
+        return max(0.0, target / price)
 
     def _push(self, price: float, vol: float) -> None:
         if len(self._prices) == self._prices.maxlen:
@@ -186,22 +205,22 @@ class VWAPReversionStrategy(Strategy):
             return None
 
         if not state.has_position:
-            # Para backtests: qty_frac sigue representando fracción 0..1 (compatibilidad)
+            qty_frac = max(0.0, min(1.0, self.qty_frac))
             if z <= -abs(self.z_entry):
                 return OrderRequest(
                     decision="OPEN_LONG",
                     side="BUY",
-                    qty=max(0.0, min(1.0, self.qty_frac)),
+                    qty=qty_frac,
                     price=None,
                     reason="z_entry_long",
                     meta={"z": z, "vwap": vwap, "price": price},
                     symbol=symbol,
                 )
-            if z >= abs(self.z_entry):
+            if self.allow_short and z >= abs(self.z_entry):
                 return OrderRequest(
                     decision="OPEN_SHORT",
                     side="SELL",
-                    qty=max(0.0, min(1.0, self.qty_frac)),
+                    qty=qty_frac,
                     price=None,
                     reason="z_entry_short",
                     meta={"z": z, "vwap": vwap, "price": price},
@@ -251,18 +270,9 @@ class VWAPReversionStrategy(Strategy):
 
         # Entrada
         if not self.position.has_position:
-            # Sizing live: usar risk_pct si está definido (porcentaje del equity)
-            qty_position = max(0.0, min(1.0, self.qty_frac))
-            if self.risk_pct is not None and hasattr(broker, "cash"):
-                try:
-                    cash = float(broker.cash)
-                    if current_price > 0:
-                        qty_risk = (cash * self.risk_pct) / current_price
-                        # Evitar tamaños excesivos por error numérico
-                        if qty_risk > 0:
-                            qty_position = min(qty_risk, cash / current_price)
-                except Exception:
-                    pass
+            qty_position = self._compute_order_qty(current_price, broker)
+            if qty_position <= 0:
+                return
             if z <= -abs(self.z_entry):
                 self._log(
                     f"ENTRY LONG @ ${current_price:.2f} (z={z:.2f} <= {-abs(self.z_entry):.2f})"
@@ -272,7 +282,7 @@ class VWAPReversionStrategy(Strategy):
                 self.position.qty = qty_position
                 self.position.entry_price = current_price
                 return
-            if z >= abs(self.z_entry):
+            if self.allow_short and z >= abs(self.z_entry):
                 self._log(
                     f"ENTRY SHORT @ ${current_price:.2f} (z={z:.2f} >= {abs(self.z_entry):.2f})"
                 )

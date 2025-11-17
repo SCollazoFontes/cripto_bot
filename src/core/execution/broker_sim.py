@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class SimBrokerConfig:
     """Parámetros de configuración para el broker simulado."""
 
-    starting_cash: float = 10_000.0
+    starting_cash: float = 100.0
     fees_bps: float = 2.5  # usado si no se pasa CostModel
     slip_bps: float = 1.0  # usado si no se pasa CostModel
     allow_short: bool = False

@@ -10,7 +10,7 @@ python -m tools.live.run_binance \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_mainnet_1sec \
   --symbol BTCUSDT \
   --duration 180 \
-  --cash 10000 \
+  --cash 100 \
   --fees-bps 10 \
   --slip-bps 5 \
   --strategy momentum \
@@ -57,7 +57,7 @@ python -m tools.live.run_binance \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_fixed \
   --symbol BTCUSDT \
   --duration 180 \
-  --cash 10000 \
+  --cash 100 \
   --fees-bps 10 \
   --slip-bps 5 \
   --strategy momentum \
@@ -79,7 +79,7 @@ python -m tools.live.run_binance \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_tick_only \
   --symbol BTCUSDT \
   --duration 180 \
-  --cash 10000 \
+  --cash 100 \
   --fees-bps 10 \
   --slip-bps 5 \
   --strategy momentum \
@@ -97,7 +97,7 @@ python -m tools.live.run_binance \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_all_policy \
   --symbol BTCUSDT \
   --duration 180 \
-  --cash 10000 \
+  --cash 100 \
   --fees-bps 10 \
   --slip-bps 5 \
   --strategy momentum \
@@ -129,7 +129,7 @@ python -m tools.live.run_binance \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_mainnet_1sec \
   --symbol BTCUSDT \
   --duration 180 \
-  --cash 10000 \
+  --cash 100 \
   --fees-bps 10 \
   --slip-bps 5 \
   --strategy momentum \

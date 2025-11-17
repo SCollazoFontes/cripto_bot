@@ -119,12 +119,7 @@ def main():
 
     strategies = {
         "momentum": {
-            "lookback_ticks": 10,
-            "entry_threshold": 0.001,
-            "exit_threshold": 0.0005,
-        },
-        "momentum_v2": {
-            "lookback_ticks": 15,
+            "lookback_ticks": 12,
             "entry_threshold": 0.0005,
             "exit_threshold": 0.0003,
             "min_volatility": 0.0001,

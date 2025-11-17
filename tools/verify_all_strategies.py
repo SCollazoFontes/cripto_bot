@@ -48,10 +48,11 @@ def verify_strategy(run_dir: str, name: str) -> None:
         # Mostrar los valores más importantes según la estrategia
         if strategy == "momentum":
             print(f"Momentum:   {meta.get('momentum', 0):.6f}")
-        elif strategy == "momentum_v2":
-            print(f"Momentum:   {meta.get('momentum', 0):.6f}")
-            print(f"Vol:        {meta.get('volatility', 0):.6f}")
-            print(f"Tendencia:  {'✓' if meta.get('trend_confirmed') else '✗'}")
+            if "volatility" in meta:
+                print(f"Vol:        {meta.get('volatility', 0):.6f}")
+                trend = meta.get("trend_confirmed")
+                if trend is not None:
+                    print(f"Tendencia:  {'✓' if trend else '✗'}")
         elif strategy == "vwap_reversion":
             print(f"Z-Score:    {meta.get('z_score', 0):.2f}")
             print(f"VWAP:       ${meta.get('vwap', 0):.2f}")
@@ -65,7 +66,6 @@ def verify_strategy(run_dir: str, name: str) -> None:
 def main():
     strategies = [
         ("runs/test_momentum", "Momentum"),
-        ("runs/20251116T205952Z_test_final", "Momentum V2"),
         ("runs/test_vwap_long", "VWAP Reversion"),
         ("runs/test_volbreak", "Vol Breakout"),
     ]

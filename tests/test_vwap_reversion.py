@@ -30,8 +30,8 @@ def test_vwap_reversion_entry_and_close():
         bar = {"close": 100.0 + i * 0.1, "volume": 1.0}
         strat.on_bar_live(broker, ex, "BTCUSDT", bar)
 
-    # Breakout abrupto para zscore alto
-    strat.on_bar_live(broker, ex, "BTCUSDT", {"close": 105.0, "volume": 1.0})
+    # Breakout abrupto hacia abajo para zscore negativo (entrada long)
+    strat.on_bar_live(broker, ex, "BTCUSDT", {"close": 95.0, "volume": 1.0})
 
     # Debe haber una entrada (BUY o SELL)
     assert any(a[0] in ("BUY", "SELL") for a in ex.actions), "Se esperaba acción de entrada"

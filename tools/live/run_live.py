@@ -426,7 +426,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--params", default=None, help="JSON con parámetros de estrategia")
     p.add_argument("--fees-bps", type=float, default=0.0, help="Comisión (bps)")
     p.add_argument("--slip-bps", type=float, default=0.0, help="Slippage (bps)")
-    p.add_argument("--cash", type=float, default=10_000.0, help="Capital inicial (USDT)")
+    p.add_argument("--cash", type=float, default=100.0, help="Capital inicial (USDT)")
 
     # Flags de prueba
     p.add_argument(

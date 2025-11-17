@@ -7,7 +7,6 @@ from typing import Any
 import pandas as pd
 
 from strategies.signals.momentum import calculate_momentum_signal
-from strategies.signals.momentum_v2 import calculate_momentum_v2_signal
 from strategies.signals.vol_breakout import calculate_vol_breakout_signal
 from strategies.signals.vwap_reversion import calculate_vwap_reversion_signal
 
@@ -36,18 +35,12 @@ def calculate_signal(
     if strategy_name == "momentum":
         return calculate_momentum_signal(
             df,
-            lookback_ticks=params.get("lookback_ticks", 10),
-            entry_threshold=params.get("entry_threshold", 0.001),
-            exit_threshold=params.get("exit_threshold", 0.0005),
-        )
-    elif strategy_name == "momentum_v2":
-        return calculate_momentum_v2_signal(
-            df,
-            lookback_ticks=params.get("lookback_ticks", 15),
-            entry_threshold=params.get("entry_threshold", 0.0005),
-            exit_threshold=params.get("exit_threshold", 0.0003),
+            lookback_ticks=params.get("lookback_ticks", 12),
+            entry_threshold=params.get("entry_threshold", 0.0002),
+            exit_threshold=params.get("exit_threshold", 0.00015),
             min_volatility=params.get("min_volatility", 0.0001),
             max_volatility=params.get("max_volatility", 0.025),
+            volatility_window=params.get("volatility_window", 50),
         )
     elif strategy_name == "vwap_reversion":
         return calculate_vwap_reversion_signal(

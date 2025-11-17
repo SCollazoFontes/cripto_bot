@@ -10,8 +10,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 DEFAULT_STRATEGY = "momentum"
-DEFAULT_ENTRY = 0.001
-DEFAULT_EXIT = 0.0005
+DEFAULT_ENTRY = 0.0002
+DEFAULT_EXIT = 0.00015
 
 
 def _load_manifest(run_dir: str) -> tuple[str, dict[str, Any]]:
@@ -33,10 +33,7 @@ def _resolve_thresholds(strategy_name: str, params: dict[str, Any]) -> tuple[flo
     entry = float(params.get("entry_threshold", DEFAULT_ENTRY))
     exit_thr = float(params.get("exit_threshold", DEFAULT_EXIT))
 
-    if strategy_name == "momentum_v2":
-        entry = float(params.get("entry_threshold", entry))
-        exit_thr = float(params.get("exit_threshold", exit_thr))
-    elif strategy_name == "vwap_reversion":
+    if strategy_name == "vwap_reversion":
         entry = float(params.get("z_entry", entry))
         exit_thr = float(params.get("z_exit", exit_thr))
 

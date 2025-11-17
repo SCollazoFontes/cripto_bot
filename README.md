@@ -160,7 +160,7 @@ Ejemplo:
 PYTHONPATH=$(pwd)/src python -m tools.run_live \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ) \
   --source csv --csv runs/quick_check/data.csv \
-  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 10000
+  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 100
 ```
 
 En macOS, para evitar que el portátil duerma con la tapa cerrada mientras corre un run nocturno (7h ~ 25200s):
@@ -169,37 +169,34 @@ En macOS, para evitar que el portátil duerma con la tapa cerrada mientras corre
 caffeinate -dimsu -t 25200 -- python -m tools.run_live \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ) \
   --source csv --csv runs/quick_check/data.csv \
-  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 10000
+  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 100
 ```
 
 ## 🌐 Entorno y Configuración
 
 ## 📈 Estrategias Disponibles
 
-| Estrategia        | Archivo                | Propósito Breve                                  |
-|-------------------|------------------------|--------------------------------------------------|
-| `momentum`        | `strategies/momentum.py`      | Momentum simple sobre media reciente             |
-| `momentum_v2`     | `strategies/momentum_v2.py`   | Momentum con filtros (volatilidad, cooldown, SL/TP)|
-| `vol_breakout`    | `strategies/vol_breakout.py`  | Ruptura de canal con ATR y gestión de riesgo     |
-| `vwap_reversion`  | `strategies/vwap_reversion.py`| Reversión a VWAP usando z-score y TP/SL          |
+| Estrategia        | Archivo                | Propósito Breve                                                |
+|-------------------|------------------------|----------------------------------------------------------------|
+| `momentum`        | `strategies/momentum.py`      | Momentum con filtros (volatilidad, cooling, SL/TP)             |
+| `vol_breakout`    | `strategies/vol_breakout.py`  | Ruptura de canal con ATR y gestión de riesgo                   |
+| `vwap_reversion`  | `strategies/vwap_reversion.py`| Reversión a VWAP usando z-score y TP/SL                        |
 
 ### Parámetros `momentum`
-Ejemplo JSON vía `--params`:
-```json
-{"lookback_ticks": 20, "entry_threshold": 0.0015, "exit_threshold": 0.001, "qty_frac": 0.3}
-```
-
-### Parámetros `momentum_v2`
 ```json
 {
   "lookback_ticks": 20,
   "entry_threshold": 0.0015,
   "exit_threshold": 0.001,
-  "qty_frac": 0.3,
-  "stop_loss_pct": 0.008,
-  "take_profit_pct": 0.015,
+  "qty_frac": 1.0,
+  "order_notional": 5.0,
+  "stop_loss_pct": 0.01,
+  "take_profit_pct": 0.02,
   "cooldown_bars": 3,
-  "trend_confirmation": false
+  "min_volatility": 0.0001,
+  "max_volatility": 0.025,
+  "trend_confirmation": true,
+  "allow_short": false
 }
 ```
 
@@ -211,8 +208,10 @@ Se pueden pasar por JSON o flags dedicados:
 | `--vb-atr-period` | `atr_period` | Periodo ATR | 14 |
 | `--vb-atr-mult` | `atr_mult` | Multiplicador ATR para ruptura | 0.5 |
 | `--vb-stop-mult` | `stop_mult` | Multiplicador ATR para stop | 2.0 |
-| `--vb-qty-frac` | `qty_frac` | Fracción de capital | 0.2 |
+| `--vb-qty-frac` | `qty_frac` | Fracción de capital | 1.0 |
 | `--vb-debug` | `debug` | Logs detallados | False |
+
+> Nota: cada entrada usa `order_notional` (5 USD por defecto, configurable vía `--params '{"order_notional":10}'`). Por defecto `allow_short=false`, así que solo abre largos salvo que se indique lo contrario.
 
 Ejemplo:
 ```bash
@@ -233,6 +232,8 @@ Flags dedicados:
 | `--vr-stop-loss-pct` | `stop_loss_pct` | Stop loss | 0.004 |
 | `--vr-qty-frac` | `qty_frac` | Fracción capital | 1.0 |
 | `--vr-warmup` | `warmup` | Barras warmup | = vwap_window |
+
+> Nota: el tamaño real por trade es `order_notional` (5 USD por defecto, ajusta con `--params '{"order_notional":8}'`). Si no quieres cortos, deja `allow_short=false` (valor por defecto).
 
 Ejemplo:
 ```bash
@@ -259,8 +260,8 @@ Ejemplo completo con estrategia y builder:
 ```bash
 python -m tools.live.run_binance \
   --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
-  --symbol BTCUSDT --cash 12000 --fees-bps 10.0 \
-  --strategy momentum_v2 --params '{"lookback_ticks": 20, "entry_threshold": 0.0015, "exit_threshold": 0.001}' \
+  --symbol BTCUSDT --cash 100 --fees-bps 10.0 \
+  --strategy momentum --params '{"lookback_ticks": 20, "entry_threshold": 0.0015, "exit_threshold": 0.001}' \
   --bar-tick-limit 100 --bar-value-limit 50000 --bar-policy any
 ```
 
@@ -275,4 +276,3 @@ Variables de entorno importantes (`.env`):
 2. Escribe tests para nuevas funcionalidades
 3. Ejecuta `pre-commit run --all-files` antes de commit
 4. Asegúrate de que `pytest` pase sin errores
-

@@ -170,10 +170,11 @@ def main():
     from strategies.base import get_strategy_class
 
     strategies_to_test = {
-        "momentum": {"lookback_ticks": 10, "entry_threshold": 0.001, "debug": False},
-        "momentum_v2": {
-            "lookback_ticks": 15,
+        "momentum": {
+            "lookback_ticks": 12,
             "entry_threshold": 0.0005,
+            "min_volatility": 0.0001,
+            "max_volatility": 0.025,
             "debug": False,
         },
         "vwap_reversion": {

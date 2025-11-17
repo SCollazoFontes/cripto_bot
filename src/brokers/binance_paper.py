@@ -109,7 +109,7 @@ class BinancePaperBroker(BaseBroker):
         self._exec: _ExecCfg = exec_cfg or _ExecCfg()
         self._orders: dict[int, _O] = {}
         self._positions: dict[str, float] = {}
-        self._usdt: float = 10_000.0
+        self._usdt: float = 100.0
         self._next_id: int = 1
         # Modelo de costes opcional (slippage y fees realistas)
         self._cost_model: CostModel | None = cost_model

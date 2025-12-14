@@ -3,19 +3,15 @@
 Optimization targets for different strategies.
 
 Each target module provides:
-- evaluate_<strategy>_target() function
-- build_<strategy>_target() function for runner integration
-- BrokerParams dataclass
+- Optimizer class (inherits from BaseStrategyOptimizer)
+- get_<strategy>_target() function for legacy compatibility
 """
-
 from tools.optimize.targets.momentum import (
-    BrokerParams,
-    build_momentum_target,
-    evaluate_momentum_target,
+    MomentumOptimizer,
+    get_momentum_target,
 )
 
 __all__ = [
-    "BrokerParams",
-    "build_momentum_target",
-    "evaluate_momentum_target",
+    "MomentumOptimizer",
+    "get_momentum_target",
 ]

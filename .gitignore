@@ -37,6 +37,7 @@ reports/diag/*.csv
 reports/paper_runs/*/
 reports/runs_from_bars_v2/*/
 runs/*/
+data/datasets/*.csv
 !runs/quick_check/
 runs_opt/*/
 !runs_opt/consolidated_results.csv

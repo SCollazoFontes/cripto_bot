@@ -107,6 +107,40 @@ async def run_live_trading(
     # Crear executor
     executor = SimpleExecutor(broker)
 
+    # Registrar callback de fills para instrumentación de costes
+    def _on_fill(details: dict) -> None:
+        spread_bps = 0.0
+        if spread_tracker:
+            try:
+                spread_bps = float(spread_tracker.get_spread())
+            except Exception:
+                spread_bps = 0.0
+        mid = float(details.get("mid_price", 0.0))
+        eff = float(details.get("effective_price", 0.0))
+        side = str(details.get("side", "buy"))
+        sign = 1.0 if side.lower() == "buy" else -1.0
+        exec_dev_bps = 0.0
+        if mid > 0 and eff > 0:
+            exec_dev_bps = ((eff - mid) / mid) * 10000.0 * sign
+        row = {
+            "timestamp": int(details.get("timestamp", time.time())),
+            "symbol": details.get("symbol", symbol),
+            "side": side,
+            "role": details.get("role", "taker"),
+            "mid_price": mid,
+            "effective_price": eff,
+            "qty": float(details.get("qty", 0.0)),
+            "fee": float(details.get("fee", 0.0)),
+            "spread_bps": spread_bps,
+            "exec_dev_bps": exec_dev_bps,
+        }
+        cost_rows.append(row)
+
+    try:
+        broker.on_fill = _on_fill  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
     # Cargar estrategia
     strategy = None
     if strategy_name:
@@ -165,6 +199,7 @@ async def run_live_trading(
     _chart_last_flushed: int = 0
     _FLUSH_INTERVAL = int(bar_flush_interval)  # número de barras entre flush a disco
     trade_rows: list[dict] = []
+    cost_rows: list[dict] = []
     decisions_rows: list[dict] = []
 
     trades_seen = 0
@@ -179,6 +214,7 @@ async def run_live_trading(
     chart_csv_path = run_dir / "chart.csv"  # Barras de tiempo para gráfico
     equity_csv_path = run_dir / "equity.csv"
     trades_csv_path = run_dir / "trades.csv"
+    costs_csv_path = run_dir / "costs.csv"
     try:
         if not data_csv_path.exists():
             with data_csv_path.open("w", newline="") as f:
@@ -229,6 +265,25 @@ async def run_live_trading(
             with trades_csv_path.open("w", newline="") as f:
                 w = csv.DictWriter(
                     f, fieldnames=["timestamp", "side", "price", "qty", "cash", "equity", "reason"]
+                )
+                w.writeheader()
+        # Inicializar costs.csv si no existe (para escritura incremental)
+        if not costs_csv_path.exists():
+            with costs_csv_path.open("w", newline="") as f:
+                w = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "timestamp",
+                        "symbol",
+                        "side",
+                        "role",
+                        "mid_price",
+                        "effective_price",
+                        "qty",
+                        "fee",
+                        "spread_bps",
+                        "exec_dev_bps",
+                    ],
                 )
                 w.writeheader()
     except Exception as e:
@@ -650,6 +705,29 @@ async def run_live_trading(
         write_trades_csv(run_dir, trade_rows)
         # Guardar decisions.csv
         write_decisions_csv(run_dir, decisions_rows)
+        # Guardar costs.csv
+        try:
+            if cost_rows:
+                with costs_csv_path.open("a", newline="") as f:
+                    w = csv.DictWriter(
+                        f,
+                        fieldnames=[
+                            "timestamp",
+                            "symbol",
+                            "side",
+                            "role",
+                            "mid_price",
+                            "effective_price",
+                            "qty",
+                            "fee",
+                            "spread_bps",
+                            "exec_dev_bps",
+                        ],
+                    )
+                    for r in cost_rows:
+                        w.writerow(r)
+        except Exception as e:
+            print(f"⚠️  Error guardando costs.csv: {e}")
         # data.csv ya se fue escribiendo incrementalmente
         # Guardar quality.json
         duration_sec = time.time() - start_time

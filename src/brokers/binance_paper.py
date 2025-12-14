@@ -115,6 +115,11 @@ class BinancePaperBroker(BaseBroker):
         self._cost_model: CostModel | None = cost_model
         # Último precio conocido por símbolo (para ejecutar MARKET inmediatamente)
         self._last_px: dict[str, float] = {}
+        # Callback opcional para reportar fills (instrumentación de costes)
+        # Firma: on_fill(details: dict) -> None
+        from collections.abc import Callable
+
+        self.on_fill: Callable[[dict], None] | None = None
 
     # ------------------------------------------------------------------ #
     # API obligatoria de BaseBroker
@@ -306,6 +311,26 @@ class BinancePaperBroker(BaseBroker):
 
         self._apply_cash_position_effects(o.side, o.symbol, px, fill_qty, fee)
 
+        # Instrumentación: emitir detalles del fill si hay callback
+        if self.on_fill:
+            try:
+                side_s = "buy" if o.side is OrderSide.BUY else "sell"
+                self.on_fill(
+                    {
+                        "timestamp": ts,
+                        "symbol": o.symbol,
+                        "side": side_s,
+                        "role": "taker",
+                        "mid_price": mid,
+                        "effective_price": px,
+                        "qty": fill_qty,
+                        "fee": fee,
+                        "type": "MARKET",
+                    }
+                )
+            except Exception:
+                pass
+
     def _fill_limit(self, o: _O, mid: float, ts: float) -> None:
         if o.status in _TERMINAL:
             return
@@ -328,6 +353,27 @@ class BinancePaperBroker(BaseBroker):
         o.updated_ts = ts
         o.status = OrderStatus.FILLED
         self._apply_cash_position_effects(o.side, o.symbol, px, fill_qty, fee)
+
+        # Instrumentación: emitir detalles del fill si hay callback
+        if self.on_fill:
+            try:
+                side_s = "buy" if o.side is OrderSide.BUY else "sell"
+                self.on_fill(
+                    {
+                        "timestamp": ts,
+                        "symbol": o.symbol,
+                        "side": side_s,
+                        "role": "maker",
+                        "mid_price": mid,
+                        "effective_price": px,
+                        "qty": fill_qty,
+                        "fee": fee,
+                        "type": "LIMIT",
+                        "limit_price": float(o.price),
+                    }
+                )
+            except Exception:
+                pass
 
     # Conversión interna -> público
     def _to_order(self, o: _O, *, oid: int | None = None) -> Order:

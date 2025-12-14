@@ -1,7 +1,0 @@
-__pycache__
-bars
-config
-core
-exchange
-tests
-tools

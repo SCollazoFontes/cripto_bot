@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Trading en vivo con datos reales de Binance (testnet o mainnet).
-Conecta al WebSocket de Binance, procesa trades en tiempo real,
-construye micro-velas y ejecuta la estrategia.
+Trading en vivo con datos reales de Binance (mainnet paper live).
+Conecta al WebSocket de Binance Mainnet, procesa trades en tiempo real,
+construye micro-velas y ejecuta la estrategia en paper trading.
 
 Uso:
     source activate.sh
     python -m tools.live.run_binance \
         --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
         --symbol BTCUSDT \
-        --testnet \
         --duration 600 \
         --cash 100 \
         --fees-bps 2.5 \
@@ -44,7 +43,12 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Trading en vivo con Binance WebSocket")
     p.add_argument("--run-dir", required=True, help="Directorio para guardar resultados")
     p.add_argument("--symbol", default="BTCUSDT", help="Símbolo a tradear")
-    p.add_argument("--testnet", action="store_true", help="Usar Binance Testnet")
+    p.add_argument(
+        "--testnet",
+        action="store_true",
+        default=False,
+        help="Usar Binance Testnet (default: mainnet paper live)",
+    )
     p.add_argument("--duration", type=int, default=600, help="Duración en segundos")
     p.add_argument("--cash", type=float, default=100.0, help="Capital inicial (USDT)")
     p.add_argument(
@@ -227,6 +231,15 @@ def main() -> None:
             vr["qty_frac"] = args.vr_qty_frac
         if args.vr_warmup is not None:
             vr["warmup"] = args.vr_warmup
+
+    if args.strategy == "momentum":
+        # Normalizar aliases comunes
+        if "lookback" in combined_params and "lookback_ticks" not in combined_params:
+            combined_params["lookback_ticks"] = combined_params.pop("lookback")
+        if "threshold" in combined_params and "entry_threshold" not in combined_params:
+            combined_params["entry_threshold"] = combined_params.pop("threshold")
+        if "exit" in combined_params and "exit_threshold" not in combined_params:
+            combined_params["exit_threshold"] = combined_params.pop("exit")
 
     # Serializar params combinados (o None si vacío)
     params_json = json.dumps(combined_params) if combined_params else None

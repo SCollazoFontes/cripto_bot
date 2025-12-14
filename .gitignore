@@ -30,6 +30,7 @@ htmlcov/
 
 # Project specific
 data/bars_live/*.csv
+data/bars_live/*.json
 data/logs/
 data/test_write/
 reports/diag/*.csv
@@ -37,6 +38,9 @@ reports/paper_runs/*/
 reports/runs_from_bars_v2/*/
 runs/*/
 !runs/quick_check/
+runs_opt/*/
+!runs_opt/consolidated_results.csv
+runs_opt_vol/*/
 *.log
 
 # Environment

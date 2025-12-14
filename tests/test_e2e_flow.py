@@ -125,7 +125,7 @@ def test_strategy_integration():
 
         logger.info("Creando MomentumStrategy...")
         strategy = MomentumStrategy(
-            lookback_ticks=5,
+            lookback_ticks=10,  # Mínimo válido es 10
             entry_threshold=0.001,
             exit_threshold=0.0005,
             qty_frac=0.1,

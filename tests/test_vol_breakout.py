@@ -1,7 +1,7 @@
 # tests/test_vol_breakout.py
 from types import SimpleNamespace
 
-from strategies.vol_breakout import VolatilityBreakoutStrategy
+from strategies.vol_breakout import VolBreakoutStrategy as VolatilityBreakoutStrategy
 
 
 class DummyBroker:

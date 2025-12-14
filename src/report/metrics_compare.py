@@ -140,6 +140,36 @@ def _ensure_equity(run_dir: Path, df_equity: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True).astype({"t": "int64"})
 
 
+def _last_close_time_from_trades(run_dir: Path) -> int | None:
+    """Devuelve el timestamp del último SELL si existe, o último trade si no hay SELL.
+
+    Esto permite recortar equity.csv hasta el último cierre de estrategia, evitando
+    que el retorno se calcule con el último valor del dataset cuando ya no hay
+    posición abierta.
+    """
+    trades_path = run_dir / "trades.csv"
+    if not trades_path.exists():
+        return None
+    try:
+        td = _read_csv_safe(trades_path)
+        tcol = _pick_time_column(td)
+    except Exception:
+        return None
+
+    lower_map = {c.lower(): c for c in td.columns}
+    side_col = lower_map.get("side")
+    ts = pd.to_numeric(td[tcol], errors="coerce")
+
+    # Priorizar el último SELL (cierre de posición). Si no hay, usar último trade.
+    if side_col:
+        sells = td[side_col].astype(str).str.upper() == "SELL"
+        ts_sell = ts[sells]
+        if ts_sell.notna().any():
+            return int(ts_sell.max())
+
+    return int(ts.max()) if ts.notna().any() else None
+
+
 def _max_drawdown(equity: pd.Series) -> tuple[float, int]:
     roll_max = equity.cummax()
     dd = equity / roll_max - 1.0
@@ -298,6 +328,14 @@ def metrics_for_run(run_dir: str | Path) -> dict[str, float]:
     run_dir = Path(run_dir)
     eq_df = _ensure_equity(run_dir, _read_csv_safe(run_dir / "equity.csv"))
 
+    # Recortar equity al último cierre de estrategia (último SELL) para evitar
+    # que el retorno use el final del dataset cuando ya no hay posición.
+    last_close_t = _last_close_time_from_trades(run_dir)
+    if last_close_t is not None:
+        trimmed = eq_df[eq_df["t"] <= last_close_t]
+        if len(trimmed) >= 2:
+            eq_df = trimmed.reset_index(drop=True)
+
     t0, t1 = int(eq_df["t"].iloc[0]), int(eq_df["t"].iloc[-1])
     e0, e1 = float(eq_df["equity"].iloc[0]), float(eq_df["equity"].iloc[-1])
     total_return = e1 / e0 - 1.0
@@ -387,27 +425,27 @@ def metrics_for_run(run_dir: str | Path) -> dict[str, float]:
 
     out = {
         "run_dir": str(run_dir),
-        "t0": t0,
-        "t1": t1,
-        "hours": hours,
-        "equity_start": e0,
-        "equity_end": e1,
-        "ret_total": total_return,
-        "cagr": cagr,
-        "vol_ann": vol_ann,
-        "sharpe": sharpe,
-        "sortino": sortino,
-        "max_dd": mdd,
-        "dd_duration_steps": dd_dur,
-        "calmar": calmar,
-        "n_trades": n_trades,
-        "win_rate_pct": win_rate,
-        "avg_trade_qty": avg_trade_qty,
-        "notional": notional,
-        "fees_total": fees_total,
-        "fee_bps": fee_bps,
-        "slippage_bps": slippage_bps,
-        "exposure_pct": exposure,
+        "t0": int(t0),
+        "t1": int(t1),
+        "hours": float(hours),
+        "equity_start": float(e0),
+        "equity_end": float(e1),
+        "ret_total": float(total_return),
+        "cagr": float(cagr),
+        "vol_ann": float(vol_ann),
+        "sharpe": float(sharpe),
+        "sortino": float(sortino),
+        "max_dd": float(mdd),
+        "dd_duration_steps": int(dd_dur),
+        "calmar": float(calmar),
+        "n_trades": int(n_trades),
+        "win_rate_pct": float(win_rate),
+        "avg_trade_qty": float(avg_trade_qty),
+        "notional": float(notional),
+        "fees_total": float(fees_total),
+        "fee_bps": float(fee_bps),
+        "slippage_bps": float(slippage_bps),
+        "exposure_pct": float(exposure),
     }
     out.update(latency)
     return out

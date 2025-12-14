@@ -1,5 +1,5 @@
 # tests/test_vwap_reversion.py
-from strategies.vwap_reversion import VWAPReversionStrategy
+from strategies.vwap import VWAPReversionStrategy
 
 
 class DummyBroker:

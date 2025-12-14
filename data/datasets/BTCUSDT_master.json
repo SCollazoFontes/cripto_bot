@@ -1,0 +1,12 @@
+{
+  "rows": 44599231,
+  "timestamp_min": 1762883147.683,
+  "timestamp_max": 1765730278.869,
+  "from": "2025-11-11T17:45:47.683000+00:00",
+  "to": "2025-12-14T16:37:58.869000+00:00",
+  "out_path": "data/datasets/BTCUSDT_master.csv",
+  "mode": "binance_trades",
+  "symbol": "BTCUSDT",
+  "max_days": 365.0,
+  "chunk_minutes": 240
+}

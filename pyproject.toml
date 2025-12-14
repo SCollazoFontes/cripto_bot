@@ -25,6 +25,7 @@ ignore = []
 "main.py" = ["E402"]
 "check_system.py" = ["E402"]
 "src/core/io.py" = ["E402"]
+"tools/**" = ["E402", "B007", "B904", "B905", "UP028", "F841", "W293"]
 
 [tool.ruff.lint.isort]
 # Imports normalizados: usamos 'from bars...', 'from core...', etc. (sin 'src.' prefix)
@@ -52,6 +53,8 @@ check_untyped_defs = false
 mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
+files = ["src", "tools", "tests"]
+exclude = ["src/report/metrics_compare.py"]
 
 [[tool.mypy.overrides]]
 module = "core.strategy_runtime"

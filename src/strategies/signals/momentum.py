@@ -15,7 +15,7 @@ def calculate_momentum_signal(
     lookback_ticks: int = 12,
     entry_threshold: float = 0.0002,
     exit_threshold: float = 0.00015,
-    min_volatility: float = 0.0001,
+    min_volatility: float = 0.00001,  # Lowered for testnet compatibility
     max_volatility: float = 0.025,
     volatility_window: int = 50,
 ) -> tuple[float, str, dict[str, Any]]:
@@ -24,11 +24,16 @@ def calculate_momentum_signal(
 
     Returns (signal_value, zone_text, metadata)
     """
-    if df.empty or len(df) < lookback_ticks * 2:
+    # Require minimum bars for signal calculation (adapt to available history)
+    min_bars = 10  # Absolute minimum for meaningful calculation
+    if df.empty or len(df) < min_bars:
         return 0.0, "NEUTRAL", {"reason": "insufficient data"}
 
+    # Use available lookback capped to actual bars
+    actual_lookback = min(lookback_ticks, max(len(df) - 5, 5))
+
     current_price = df["close"].iloc[-1]
-    recent_prices = df["close"].tail(lookback_ticks)
+    recent_prices = df["close"].tail(actual_lookback)
     mean_price = recent_prices.mean()
 
     if mean_price <= 0:
@@ -36,26 +41,40 @@ def calculate_momentum_signal(
 
     momentum = (current_price - mean_price) / mean_price
 
-    prices_array = df["close"].tail(max(volatility_window, lookback_ticks * 2)).values
+    prices_array = df["close"].tail(min(volatility_window, len(df))).values
     if len(prices_array) < 2:
         volatility = 0.0
     else:
         returns = np.diff(prices_array) / prices_array[:-1]
         volatility = np.std(returns) if len(returns) > 0 else 0.0
 
+    # Volatility filters (return signal 0 but with full metadata)
+    vol_filtered = False
     if volatility < min_volatility:
-        return 0.0, "LOW VOL", {"volatility": volatility, "reason": "volatility too low"}
+        vol_filtered = True
     if volatility > max_volatility:
-        return 0.0, "HIGH VOL", {"volatility": volatility, "reason": "volatility too high"}
+        vol_filtered = True
 
-    if len(df) >= lookback_ticks * 2:
-        long_mean = df["close"].tail(lookback_ticks * 2).mean()
+    # Trend confirmation: use double window if available (else entire dataset)
+    long_window = min(actual_lookback * 2, len(df))
+    if long_window > actual_lookback + 2 and len(df) > actual_lookback:
+        long_mean = df["close"].tail(long_window).mean()
         trend_confirmed = (mean_price > long_mean) if momentum > 0 else (mean_price < long_mean)
     else:
         trend_confirmed = True
 
-    signal = linear_scale(momentum, entry_threshold, max_multiplier=4.0)
-    zone = classify_signal_zone(signal)
+    # Always calculate signal, but may be neutralized if vol filtered
+    signal = (
+        linear_scale(momentum, entry_threshold, max_multiplier=4.0) if not vol_filtered else 0.0
+    )
+
+    if vol_filtered:
+        if volatility < min_volatility:
+            zone = "LOW VOL"
+        else:
+            zone = "HIGH VOL"
+    else:
+        zone = classify_signal_zone(signal)
 
     if not trend_confirmed and abs(signal) >= 0.5:
         signal *= 0.5
@@ -68,6 +87,7 @@ def calculate_momentum_signal(
         "mean_price": mean_price,
         "entry_threshold": entry_threshold,
         "exit_threshold": exit_threshold,
+        "vol_filtered": vol_filtered,
     }
 
     return signal, zone, metadata

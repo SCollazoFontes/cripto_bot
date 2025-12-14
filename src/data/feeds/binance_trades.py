@@ -93,7 +93,7 @@ async def iter_trades(
 
     Args:
         symbol: símbolo de Binance (ej. BTCUSDT)
-        testnet: si True, conecta a testnet
+        testnet: si True, conecta a testnet (por defecto: False = mainnet)
 
     Yields:
         dict con claves: t, price, qty, is_buyer_maker

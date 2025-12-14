@@ -234,7 +234,8 @@ async def run_live_trading(
     except Exception as e:
         print(f"⚠️  No se pudo inicializar data.csv: {e}")
     print(f"   Símbolo: {symbol}")
-    print(f"   Testnet: {testnet}")
+    net_display = "Mainnet (Paper Live)" if not testnet else "Testnet"
+    print(f"   Red: {net_display}")
     print(f"   Duración: {duration}s ({duration/60:.1f} min)")
     print(f"   Capital: ${cash:,.2f}")
     slip_display = "dinámico (spread)" if slip_bps is None else f"{slip_bps} bps"
@@ -548,7 +549,7 @@ async def run_live_trading(
             spread_tracker.stop()
 
         # Guardar resultados
-        # Flush final de barras pendientes
+        # Flush final de barras pendientes (micro y chart)
         remaining = len(bar_rows) - _last_flushed
         if remaining > 0:
             try:
@@ -573,6 +574,58 @@ async def run_live_trading(
                         writer.writerow(row)
             except Exception as e:
                 print(f"⚠️  Error flush final data.csv: {e}")
+
+        # Forzar cierre de la última barra de tiempo (chart) si hay buffer
+        try:
+            final_chart_bar = chart_builder.flush_partial()
+        except Exception:
+            final_chart_bar = None
+
+        if final_chart_bar:
+            chart_start_ts = final_chart_bar.start_time.timestamp()
+            chart_end_ts = final_chart_bar.end_time.timestamp()
+            chart_duration_ms = int((chart_end_ts - chart_start_ts) * 1000)
+            final_chart_row = {
+                "timestamp": chart_end_ts,
+                "open": final_chart_bar.open,
+                "high": final_chart_bar.high,
+                "low": final_chart_bar.low,
+                "close": final_chart_bar.close,
+                "volume": final_chart_bar.volume,
+                "trade_count": final_chart_bar.trade_count,
+                "dollar_value": (
+                    final_chart_bar.dollar_value if final_chart_bar.dollar_value else 0.0
+                ),
+                "start_time": chart_start_ts,
+                "end_time": chart_end_ts,
+                "duration_ms": chart_duration_ms,
+            }
+            chart_rows.append(final_chart_row)
+
+        remaining_chart = len(chart_rows) - _chart_last_flushed
+        if remaining_chart > 0:
+            try:
+                with chart_csv_path.open("a", newline="") as f:
+                    writer = csv.DictWriter(
+                        f,
+                        fieldnames=[
+                            "timestamp",
+                            "open",
+                            "high",
+                            "low",
+                            "close",
+                            "volume",
+                            "trade_count",
+                            "dollar_value",
+                            "start_time",
+                            "end_time",
+                            "duration_ms",
+                        ],
+                    )
+                    for row in chart_rows[_chart_last_flushed:]:
+                        writer.writerow(row)
+            except Exception as e:
+                print(f"⚠️  Error flush final chart.csv: {e}")
         final_cash = broker._usdt
         final_pos_qty = broker.get_position(symbol)
         final_equity = final_cash + (final_pos_qty * last_price)

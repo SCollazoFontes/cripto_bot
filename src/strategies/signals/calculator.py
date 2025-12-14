@@ -33,13 +33,18 @@ def calculate_signal(
     params = params or {}
 
     if strategy_name == "momentum":
+        # Aliases for CLI params (backward compatible)
+        lookback = params.get("lookback_ticks") or params.get("lookback")
+        entry_thr = params.get("entry_threshold") or params.get("threshold")
+        exit_thr = params.get("exit_threshold") or params.get("exit")
+
         return calculate_momentum_signal(
             df,
-            lookback_ticks=params.get("lookback_ticks", 12),
-            entry_threshold=params.get("entry_threshold", 0.0002),
-            exit_threshold=params.get("exit_threshold", 0.00015),
-            min_volatility=params.get("min_volatility", 0.0001),
-            max_volatility=params.get("max_volatility", 0.025),
+            lookback_ticks=lookback if lookback is not None else 50,
+            entry_threshold=entry_thr if entry_thr is not None else 0.0011,
+            exit_threshold=exit_thr if exit_thr is not None else 0.0008,
+            min_volatility=params.get("min_volatility", 0.0003),
+            max_volatility=params.get("max_volatility", 0.015),
             volatility_window=params.get("volatility_window", 50),
         )
     elif strategy_name == "vwap_reversion":

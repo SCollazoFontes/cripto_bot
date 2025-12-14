@@ -1,20 +1,19 @@
-# cripto_bot
+# 🤖 cripto_bot
 
-Bot de trading de criptomonedas con micro-velas (tick bars, volume bars, dollar bars, imbalance bars).
+Bot de trading de criptomonedas con **micro-velas adaptativas** y **estrategias dinámicas**.
+
+Construye barras a partir de trades: tick bars, volume bars, dollar bars, imbalance bars.  
+Ejecuta estrategias en vivo con dashboard en tiempo real.
+
+---
 
 ## 🚀 Inicio Rápido
 
 ### Activar Entorno
 
-El proyecto usa el entorno conda `cripto_bot`. Para activarlo y configurar PYTHONPATH automáticamente:
-
 ```bash
 source activate.sh
-```
-
-O manualmente:
-
-```bash
+# O manualmente:
 conda activate cripto_bot
 export PYTHONPATH=$(pwd)/src
 ```
@@ -23,256 +22,308 @@ export PYTHONPATH=$(pwd)/src
 
 ```bash
 pip install -r requirements.txt
-pip install pre-commit
-pre-commit install
+pre-commit install  # (opcional)
 ```
 
 ### Ejecutar Tests
 
 ```bash
-pytest                    # Ejecutar todos los tests
-pytest -v                 # Modo verbose
-pytest tests/test_*.py    # Ejecutar tests específicos
+pytest                    # Todos los tests
+pytest -v                 # Verbose
+pytest tests/test_*.py    # Tests específicos
 ```
 
-### Ejecutar Pre-commit
+---
 
-```bash
-pre-commit run --all-files  # Ejecutar todos los hooks (ruff, black, mypy)
-```
+## 🔬 Fase Actual: Optimización de Bar Builders
 
-## 📝 Estructura del Proyecto
+Estamos optimizando la configuración de micro-velas (tick_limit, value_limit, policy) para encontrar cuál funciona mejor con Momentum.
+
+---
+
+## 📁 Estructura del Proyecto
 
 ```
 cripto_bot/
-├── src/                      # Código fuente principal
-│   ├── bars/                 # Builders de micro-velas
-│   ├── brokers/              # Interfaz con exchanges
-│   ├── core/                 # Motor de trading y lógica central
-│   ├── strategies/           # Estrategias de trading
-│   ├── data/                 # Feeds de datos y validación
-│   └── tools/                # Herramientas (run_stream, etc.)
-├── tests/                    # Tests unitarios e integración
-├── tools/                    # Scripts de utilidad
-└── data/                     # Datos de mercado
+├── src/                          # Código fuente principal
+│   ├── bars/                     # Builders de micro-velas
+│   │   ├── base.py              # Trade, Bar (tipos base)
+│   │   ├── registry.py          # Registro de builders
+│   │   ├── aggregators/         # Aggregators (tick, volume, dollar, imbalance)
+│   │   ├── builders/            # Builders específicos
+│   │   └── utils/               # Utilidades de barras
+│   │
+│   ├── brokers/                 # Interfaz con exchanges
+│   │   ├── base.py              # Broker base
+│   │   └── binance_paper.py     # Paper trading (Binance)
+│   │
+│   ├── core/                    # Motor de trading
+│   │   ├── execution/           # Ejecución de órdenes
+│   │   ├── metrics/             # Cálculo de métricas
+│   │   ├── monitoring/          # Monitoring y alertas
+│   │   ├── config_loader.py     # Carga de configuración
+│   │   ├── decisions_log.py     # Log de decisiones
+│   │   ├── io.py                # I/O (CSV, JSON)
+│   │   ├── logger_config.py     # Configuración de logs
+│   │   └── types.py             # Tipos compartidos
+│   │
+│   ├── strategies/              # Estrategias de trading
+│   │   ├── base.py              # Strategy base
+│   │   └── momentum.py           # ⭐ Momentum strategy (ACTIVA + ADAPTATIVA)
+│   │
+│   ├── data/                    # Feeds de datos
+│   │   ├── bars.py              # Parser de barras
+│   │   ├── validate.py          # Validación de datos
+│   │   └── feeds/               # Feeds de datos (Binance, CSV)
+│   │
+│   └── tools/                   # Herramientas internas
+│       └── run_stream.py        # Streaming en vivo
+│
+├── tools/                       # Scripts de utilidad
+│   ├── data/                    # Gestión de datos
+│   │   ├── update_master_dataset.py    # Descargar/actualizar trades de Binance
+│   │   ├── make_bars.py                # Generar barras desde trades
+│   │   ├── validate_bars.py            # Validar barras
+│   │   ├── inspect_last.py             # Inspeccionar últimos datos
+│   │   └── capture_testnet_ticks.py    # Captura testnet (opcional)
+│   │
+│   ├── optimize/                # Optimización y backtesting
+│   │   ├── momentum.py                 # Evaluador de Momentum
+│   │   ├── builder_configs.py          # Catálogo de builders
+│   │   ├── datasets.py                 # Windowing de datos
+│   │   ├── optimizers.py               # Grid/Random/Bayes search
+│   │   ├── runner_v2.py                # Orchestrator de optimización
+│   │   └── run_momentum.py             # Runner simple para Momentum
+│   │
+│   ├── analysis/                # Análisis y validación
+│   │   ├── quick_run_momentum.py       # ⭐ Ejecución rápida de Momentum
+│   │   └── walkforward_momentum.py     # ⭐ Validación Walk-Forward (5 folds)
+│   │
+│   ├── live/                    # Trading en vivo
+│   │   ├── executor.py                 # Ejecutor de órdenes
+│   │   └── output_writers.py           # Writers de output
+│   │
+│   ├── visual/                  # Dashboard en tiempo real
+│   │   ├── layout.py                   # Layout principal
+│   │   ├── chart_ohlc.py               # Gráfico OHLC
+│   │   ├── ohlc_candles.py             # Rendering de candles
+│   │   ├── kill_switch.py              # Kill switch UI
+│   │   └── components/                 # Componentes del dashboard
+│   │       ├── decision_panel.py
+│   │       ├── kpis_panel.py
+│   │       ├── metrics_header.py
+│   │       ├── position_panel.py
+│   │       ├── signal_panel.py
+│   │       └── timeframe.py
+│   │
+│   └── run_live_binance.py      # Entry point para live trading
+│
+├── tests/                       # Tests unitarios e integración
+├── data/                        # Datos
+│   ├── datasets/                # CSV maestros
+│   │   └── BTCUSDT_master.csv   # Trade agregados Binance
+│   └── bars_live/               # Barras en tiempo real
+├── runs/                        # Resultados de backtests
+└── requirements.txt             # Dependencias
 ```
 
-## 🔧 Configuración de Imports
+---
 
-El proyecto usa imports **sin el prefijo `src.`**. Esto requiere que `PYTHONPATH` apunte a `src/`:
+## 🎯 Estrategias
+
+### Momentum Strategy ⭐ (ACTIVA)
+
+**Ubicación**: `src/strategies/momentum.py`
+
+**Estado**: ✅ Producción (con adaptabilidad dinámica)
+
+**Características**:
+- Entrada: Momentum > threshold + confirmación de tendencia
+- Salidas:
+  - Stop Loss dinámico (adapta según volatilidad)
+  - Take Profit dinámico (adapta según volatilidad)
+  - Reversal (cambio de momentum)
+- Protecciones:
+  - Min profit floor (30 bps para cubrir costes)
+  - Cooldown dinámico (adapta según rentabilidad del trade anterior)
+  - Entry threshold adaptativo (más selectivo en volatilidad alta)
+  - Trend strength validation (opcional)
+
+**Parámetros configurables**:
+- `lookback_ticks`: Ventana para media móvil (default: 50)
+- `entry_threshold`: Momentum mínimo (default: 0.0011)
+- `stop_loss_pct`: SL % (default: 1.5%, dinámico si activado)
+- `take_profit_pct`: TP % (default: 2.5%, dinámico si activado)
+- `min_profit_bps`: Profit mínimo en bps (default: 60)
+- `use_dynamic_sl/tp/entry/cooldown/min_profit`: Flags para activar adaptabilidad (todos False por defecto)
+- `use_trend_strength`: Validación de fuerza de tendencia (default: False)
+
+**Resultado reciente** (24 días, compact_60ticks):
+- Retorno: +0.00144%
+- Trades: 3
+- Última barra cerrada: 15,546
+
+---
+
+## 🔧 Guía de Uso
+
+### 1️⃣ Actualizar Base de Datos
+
+Descarga/actualiza trades desde Binance:
+
+```bash
+python3 -m tools.data.update_master_dataset \
+  --symbol BTCUSDT \
+  --mode binance_trades \
+  --max-days 365 \
+  --out data/datasets/BTCUSDT_master.csv
+```
+
+**Opciones**:
+- `--start "2025-12-01"`: Desde fecha específica
+- `--max-days 30`: Solo últimos 30 días
+- `--chunk-minutes 240`: Chunk size para downloads
+
+---
+
+### 2️⃣ Ejecutar Backtest Rápido (7 días)
+
+```bash
+python3 -m tools.analysis.quick_run_momentum \
+  --builder compact_60ticks \
+  --window 7d \
+  --params '{
+    "lookback_ticks":50,
+    "entry_threshold":0.0011,
+    "exit_threshold":0.00015,
+    "min_profit_bps":60,
+    "use_dynamic_sl":true,
+    "use_dynamic_tp":true
+  }'
+```
+
+Salida en: `runs/<timestamp>/`
+
+---
+
+### 3️⃣ Validación Walk-Forward (30 días en 5 folds)
+
+```bash
+python3 -m tools.analysis.walkforward_momentum \
+  --builder compact_60ticks \
+  --dataset data/datasets/BTCUSDT_master.csv
+```
+
+Evalúa parámetros en:
+- 5 folds (6-7 días cada uno)
+- Optimiza -> prueba sin data leakage
+- Retorna agregado de todos los folds
+
+---
+
+### 4️⃣ Trading en Vivo (con Dashboard)
+
+```bash
+python3 tools/run_live_binance.py
+```
+
+Visualiza en tiempo real:
+- Candles OHLC
+- Señales de entrada/salida
+- KPIs (retorno, trades, win rate)
+- Posición actual
+- Panel de decisiones
+
+---
+
+## 📊 Arquitectura de Barras
+
+Soporta múltiples tipos de barras:
+
+| Builder | Parámetros | Uso |
+|---------|-----------|-----|
+| `tick_bars` | `n_ticks` | Barras cada N trades |
+| `volume_bars` | `volume_qty` | Barras cada N USD volumen |
+| `dollar_bars` | `dollar_value` | Barras cada N USD notional |
+| `imbalance_bars` | `imbalance_pct` | Barras según desbalance B/S |
+| `hybrid_*` | Mix de anterior | Combinaciones de criterios |
+
+**Recomendado**: `compact_60ticks` (60 ticks, policy="any")
+
+---
+
+## 🧪 Testing
+
+```bash
+# Todos los tests
+pytest
+
+# Tests específicos
+pytest tests/test_imports.py
+pytest tests/test_builders.py
+pytest tests/test_momentum.py
+
+# Con coverage
+pytest --cov=src tests/
+```
+
+---
+
+## ⚙️ Configuración de Python
+
+Imports **sin prefijo `src/`**:
 
 ```python
 # ✅ Correcto
 from bars.base import Trade
-from core.broker import Broker
+from core.execution.costs import CostModel
 from strategies.momentum import MomentumStrategy
 
-# ❌ Incorrecto
+# ❌ Incorrecto (no hagas esto)
 from src.bars.base import Trade
-from src.core.broker import Broker
 ```
 
-Nota sobre running tools
-------------------------
+Requiere: `export PYTHONPATH=$(pwd)/src`
 
-Algunos scripts bajo `src/tools` esperan ser ejecutados con la carpeta `src` en
-el Python import path. Para ello, usa uno de estos métodos:
+O usa: `source activate.sh`
 
-### Método 1: Activar entorno (Recomendado)
+---
+
+## 📈 Próximos Pasos
+
+- [ ] Optimizar parámetros de Momentum con grid search
+- [ ] Implementar más estrategias (RSI, Bollinger Bands, etc.)
+- [ ] Integrar órdenes reales en Binance (modo producción)
+- [ ] Backtesting paralelo con múltiples estrategias
+- [ ] ML para predicción de reversiones
+
+---
+
+## 🐛 Troubleshooting
+
+### "ModuleNotFoundError: No module named 'bars'"
 ```bash
+export PYTHONPATH=$(pwd)/src
+# O:
 source activate.sh
-python -m tools.run_stream --symbol BTCUSDT --builder volume_qty --out data/bars_live/out.csv
 ```
 
-### Método 2: PYTHONPATH explícito
+### Tests fallan con import errors
 ```bash
-PYTHONPATH=$(pwd)/src python -m tools.run_stream --symbol BTCUSDT --builder volume_qty --out data/bars_live/out.csv
+pytest --no-header -rN  # Desactiva headers
 ```
 
-## 🧪 Testing
-
-El proyecto incluye:
-- **Tests unitarios**: Validan componentes individuales
-- **Tests de integración**: Validan flujos completos
-- **Tests de imports**: Aseguran que imports normalizados funcionan
-
-```bash
-pytest tests/test_imports.py      # Tests de imports
-pytest tests/test_builders.py     # Tests de builders
-pytest tests/test_integration.py  # Tests de integración
+### Memoria insuficiente en backtests largos
+Reduce el tamaño del dataset:
+```python
+--max-days 7  # Solo últimos 7 días
 ```
 
-## 🎨 Code Quality
+---
 
-El proyecto usa:
-- **ruff**: Linter rápido (PEP8, pyflakes, isort, etc.)
-- **black**: Formatter automático (line-length=120)
-- **mypy**: Type checker estático
-- **pre-commit**: Hooks automáticos antes de commit
+## 📞 Info
 
-Estos se ejecutan automáticamente con `pre-commit` o manualmente con:
-
-```bash
-ruff check --fix .
-black .
-mypy src/
-```
-
-## 📚 Herramientas Disponibles
-
-### run_stream.py
-Ingesta trades vía WebSocket y construye micro-barras en tiempo real:
-
-```bash
-python -m tools.run_stream \
-  --symbol BTCUSDT \
-  --builder volume_qty \
-  --qty-limit 0.25 \
-  --out data/bars_live/out.csv \
-  --max-trades 10000
-```
-
-Builders disponibles:
-- `tick_count` (--count)
-- `volume_qty` (--qty-limit)
-- `dollar` (--dollar-limit)
-- `imbalance` (--alpha)
-
-### run_mem_loop.py
-Loop en memoria para validar estabilidad de builders con ticks sintéticos.
-
-### inspect_last.py
-Inspección rápida de archivos de micro-barras con métricas de calidad.
-
-### run_live.py (desde CSV, con reporting enriquecido)
-Runner sencillo que reproduce un flujo "live-like" a partir de un CSV (por reproducibilidad) y guarda salidas para análisis:
-
-- equity.csv: t, price, qty, cash, equity por barra
-- trades.csv: enriquecido con costes estimados vs reales (fee/slippage)
-- decisions.csv: decisiones ejecutadas (t, price, side, qty, reason)
-- summary.json: equity inicial/final, retorno total y número de barras
-- manifest.json: metadatos del run (estrategia, params, símbolo, costes)
-- quality.json: duración del run y barras/seg
-
-Ejemplo:
-
-```bash
-PYTHONPATH=$(pwd)/src python -m tools.run_live \
-  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ) \
-  --source csv --csv runs/quick_check/data.csv \
-  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 100
-```
-
-En macOS, para evitar que el portátil duerma con la tapa cerrada mientras corre un run nocturno (7h ~ 25200s):
-
-```bash
-caffeinate -dimsu -t 25200 -- python -m tools.run_live \
-  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ) \
-  --source csv --csv runs/quick_check/data.csv \
-  --symbol BTCUSDT --fees-bps 2.5 --slip-bps 1.0 --cash 100
-```
-
-## 🌐 Entorno y Configuración
-
-## 📈 Estrategias Disponibles
-
-| Estrategia        | Archivo                | Propósito Breve                                                |
-|-------------------|------------------------|----------------------------------------------------------------|
-| `momentum`        | `strategies/momentum.py`      | Momentum con filtros (volatilidad, cooling, SL/TP)             |
-| `vol_breakout`    | `strategies/vol_breakout.py`  | Ruptura de canal con ATR y gestión de riesgo                   |
-| `vwap_reversion`  | `strategies/vwap_reversion.py`| Reversión a VWAP usando z-score y TP/SL                        |
-
-### Parámetros `momentum`
-```json
-{
-  "lookback_ticks": 20,
-  "entry_threshold": 0.0015,
-  "exit_threshold": 0.001,
-  "qty_frac": 1.0,
-  "order_notional": 5.0,
-  "stop_loss_pct": 0.01,
-  "take_profit_pct": 0.02,
-  "cooldown_bars": 3,
-  "min_volatility": 0.0001,
-  "max_volatility": 0.025,
-  "trend_confirmation": true,
-  "allow_short": false
-}
-```
-
-### Parámetros `vol_breakout`
-Se pueden pasar por JSON o flags dedicados:
-| Flag | Clave JSON | Descripción | Default interno |
-|------|------------|-------------|-----------------|
-| `--vb-lookback` | `lookback` | Tamaño del canal | 20 |
-| `--vb-atr-period` | `atr_period` | Periodo ATR | 14 |
-| `--vb-atr-mult` | `atr_mult` | Multiplicador ATR para ruptura | 0.5 |
-| `--vb-stop-mult` | `stop_mult` | Multiplicador ATR para stop | 2.0 |
-| `--vb-qty-frac` | `qty_frac` | Fracción de capital | 1.0 |
-| `--vb-debug` | `debug` | Logs detallados | False |
-
-> Nota: cada entrada usa `order_notional` (5 USD por defecto, configurable vía `--params '{"order_notional":10}'`). Por defecto `allow_short=false`, así que solo abre largos salvo que se indique lo contrario.
-
-Ejemplo:
-```bash
-python -m tools.live.run_binance \
-  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
-  --symbol BTCUSDT --strategy vol_breakout \
-  --vb-lookback 30 --vb-atr-period 10 --vb-atr-mult 0.7 --vb-stop-mult 1.8 --vb-qty-frac 0.25
-```
-
-### Parámetros `vwap_reversion`
-Flags dedicados:
-| Flag | Clave JSON | Descripción | Default interno |
-|------|------------|-------------|-----------------|
-| `--vr-vwap-window` | `vwap_window` | Ventana VWAP/Z | 50 |
-| `--vr-z-entry` | `z_entry` | Umbral entrada | 1.5 |
-| `--vr-z-exit` | `z_exit` | Umbral salida | 0.5 |
-| `--vr-take-profit-pct` | `take_profit_pct` | Take profit | 0.006 |
-| `--vr-stop-loss-pct` | `stop_loss_pct` | Stop loss | 0.004 |
-| `--vr-qty-frac` | `qty_frac` | Fracción capital | 1.0 |
-| `--vr-warmup` | `warmup` | Barras warmup | = vwap_window |
-
-> Nota: el tamaño real por trade es `order_notional` (5 USD por defecto, ajusta con `--params '{"order_notional":8}'`). Si no quieres cortos, deja `allow_short=false` (valor por defecto).
-
-Ejemplo:
-```bash
-python -m tools.live.run_binance \
-  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
-  --symbol BTCUSDT --strategy vwap_reversion \
-  --vr-vwap-window 40 --vr-z-entry 1.2 --vr-z-exit 0.3 --vr-take-profit-pct 0.008 --vr-stop-loss-pct 0.005 --vr-qty-frac 0.6
-```
-
-### Combinar con `--params`
-Si se pasa `--params` (JSON) y flags específicos, los flags sobrescriben claves del JSON.
-
-### Bar Builder (Composite)
-Recordatorio de flags de micro-velas:
-```bash
---bar-tick-limit 100       # trades
---bar-qty-limit 5.0        # BTC acumulados
---bar-value-limit 50000    # Notional USDT
---bar-imbal-limit 10.0     # Imbalance (no implementado aún)
---bar-policy any|all       # Política de cierre
-```
-
-Ejemplo completo con estrategia y builder:
-```bash
-python -m tools.live.run_binance \
-  --run-dir runs/$(date -u +%Y%m%dT%H%M%SZ)_live \
-  --symbol BTCUSDT --cash 100 --fees-bps 10.0 \
-  --strategy momentum --params '{"lookback_ticks": 20, "entry_threshold": 0.0015, "exit_threshold": 0.001}' \
-  --bar-tick-limit 100 --bar-value-limit 50000 --bar-policy any
-```
-
-Variables de entorno importantes (`.env`):
-- `PYTHONPATH`: Debe apuntar a `src/`
-- `USE_TESTNET`: True para testnet, False para mainnet
-- `BINANCE_API_KEY`, `BINANCE_API_SECRET`: Credenciales de Binance
-
-## 🤝 Contribuir
-
-1. Asegúrate de que `pre-commit` esté instalado: `pre-commit install`
-2. Escribe tests para nuevas funcionalidades
-3. Ejecuta `pre-commit run --all-files` antes de commit
-4. Asegúrate de que `pytest` pase sin errores
+- **Última actualización**: 8 diciembre 2025
+- **Python**: 3.10+
+- **Exchanges**: Binance (Spot, paper trading)
+- **Estrategias activas**: Momentum (con adaptabilidad dinámica)

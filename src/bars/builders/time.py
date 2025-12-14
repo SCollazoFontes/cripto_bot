@@ -51,6 +51,18 @@ class TimeBarBuilder(BarBuilder):
         self._buffer.clear()
         self._bucket_start_ms = None
 
+    def flush_partial(self) -> Bar | None:
+        """Force-close the current bucket and return a bar if any trades exist.
+
+        Useful when shutting down the stream so the last in-progress bucket is
+        not lost if no new trade arrives to advance the time window.
+        """
+        if not self._buffer:
+            return None
+        bar = self._build_bar(self._buffer)
+        self.reset()
+        return bar
+
     def get_current_trades(self) -> list[Trade]:
         return list(self._buffer)
 

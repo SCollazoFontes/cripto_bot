@@ -33,7 +33,7 @@ def example_single_evaluation():
     window = windows[0]
 
     print(f"Window: {window.label}")
-    print(f"Trades: {len(window.trades_df)}")
+    print(f"Rows: {len(window.data)}")
     print()
 
     # Configurar broker
@@ -61,17 +61,20 @@ def example_single_evaluation():
         "cooldown_bars": 5,
     }
 
-    # Builder config (barras de 100 ticks con política ANY)
+    # Builder config directo para CompositeBarBuilder
     builder_cfg = {
-        "rules": [
-            {"type": "tick_count", "threshold": 100, "policy": "any"},
-        ]
+        "tick_limit": 100,
+        "qty_limit": None,
+        "value_limit": 50000.0,
+        "imbal_limit": None,
+        "imbal_mode": "qty",
+        "policy": "any",
     }
 
     # Evaluar
     result = optimizer.evaluate(
         params=params_conservative,
-        trades_df=window.trades_df,
+        trades_df=window.data,
         builder_config=builder_cfg,
         min_trades=3,
     )
@@ -79,7 +82,6 @@ def example_single_evaluation():
     # Mostrar resultados
     print("Resultados:")
     print(f"  Score: {result.score:.4f}")
-    print(f"  Status: {result.status}")
     print(f"  Total Return: {result.metrics.get('total_return', 0)*100:.2f}%")
     print(f"  Trades: {result.metrics.get('trades', 0)}")
     print(f"  Win Rate: {result.metrics.get('win_rate', 0)*100:.1f}%")
@@ -102,7 +104,7 @@ def example_grid_search():
     window = windows[0]
 
     print(f"Window: {window.label}")
-    print(f"Trades: {len(window.trades_df)}")
+    print(f"Rows: {len(window.data)}")
     print()
 
     # Espacio de búsqueda reducido (demo rápido)
@@ -129,7 +131,15 @@ def example_grid_search():
     broker_cfg = BrokerConfig(fees_bps=10.0, slip_bps=5.0, starting_cash=100.0)
     momentum_opt = MomentumOptimizer(symbol="BTCUSDT", broker_config=broker_cfg)
 
-    builder_cfg = {"rules": [{"type": "tick_count", "threshold": 100, "policy": "any"}]}
+    # Builder configurado directamente para CompositeBarBuilder
+    builder_cfg = {
+        "tick_limit": 100,
+        "qty_limit": None,
+        "value_limit": 50000.0,
+        "imbal_limit": None,
+        "imbal_mode": "qty",
+        "policy": "any",
+    }
 
     # Ejecutar búsqueda (limitamos a 5 trials para demo)
     best_score = float("-inf")
@@ -139,7 +149,7 @@ def example_grid_search():
     print("Ejecutando trials...\n")
     for params in grid:
         result = momentum_opt.evaluate(
-            params=params, trades_df=window.trades_df, builder_config=builder_cfg, min_trades=2
+            params=params, trades_df=window.data, builder_config=builder_cfg, min_trades=2
         )
 
         trials_run += 1
@@ -161,6 +171,113 @@ def example_grid_search():
     print()
 
 
+def systematic_optimization():
+    """
+    Optimización sistemática: prueba múltiples configuraciones de parámetros
+    sobre ventanas de tiempo y genera un reporte.
+    """
+    print("=== Optimización Sistemática: Buscar Mejores Parámetros ===\n")
+
+    dataset_path = Path("data/datasets/BTCUSDT_master.csv")
+    if not dataset_path.exists():
+        print(f"Dataset no encontrado: {dataset_path}")
+        return
+
+    dataset = DatasetSpec(dataset_path)
+    windows = slice_windows(dataset, ["3d"])  # últimos 3 días para prueba rápida
+    if not windows:
+        print("No hay ventanas disponibles")
+        return
+
+    window = windows[0]
+    print(f"Analizando: {window.label}")
+    print(f"Total velas: {len(window.data):,}\n")
+
+    broker_cfg = BrokerConfig(fees_bps=10.0, slip_bps=5.0, starting_cash=1000.0)
+    optimizer = MomentumOptimizer(symbol="BTCUSDT", broker_config=broker_cfg)
+    builder_cfg = {
+        "tick_limit": 100,
+        "qty_limit": None,
+        "value_limit": 50000.0,
+        "imbal_limit": None,
+        "imbal_mode": "qty",
+        "policy": "any",
+    }
+
+    # Configuraciones pre-definidas para probar
+    configs = {
+        "aggressive": {
+            "lookback_ticks": 20,
+            "entry_threshold": 0.0010,
+            "exit_threshold": 0.0005,
+            "stop_loss_pct": 0.006,
+            "take_profit_pct": 0.012,
+            "min_profit_bps": 30.0,
+            "cooldown_bars": 1,
+        },
+        "balanced": {
+            "lookback_ticks": 50,
+            "entry_threshold": 0.0011,
+            "exit_threshold": 0.0008,
+            "stop_loss_pct": 0.010,
+            "take_profit_pct": 0.020,
+            "min_profit_bps": 60.0,
+            "cooldown_bars": 3,
+        },
+        "conservative": {
+            "lookback_ticks": 70,
+            "entry_threshold": 0.0015,
+            "exit_threshold": 0.0010,
+            "stop_loss_pct": 0.015,
+            "take_profit_pct": 0.030,
+            "min_profit_bps": 80.0,
+            "cooldown_bars": 5,
+        },
+    }
+
+    print("Evaluando configuraciones...\n")
+    results = {}
+
+    for name, params in configs.items():
+        # Completar parámetros faltantes
+        full_params = {
+            "volatility_window": 50,
+            "min_volatility": 0.0003,
+            "max_volatility": 0.020,
+        }
+        full_params.update(params)
+
+        result = optimizer.evaluate(
+            params=full_params, trades_df=window.data, builder_config=builder_cfg, min_trades=1
+        )
+
+        results[name] = {
+            "score": result.score,
+            "n_trades": result.metrics.get("trades", 0),
+            "total_return": result.metrics.get("total_return", 0.0),
+            "params": params,
+        }
+
+        print(
+            f"{name:12} | score={result.score:8.4f} | trades={results[name]['n_trades']:3} | "
+            f"return={results[name]['total_return']:.2%}"
+        )
+
+    # Ranking
+    print("\n" + "=" * 60)
+    print("RANKING POR SCORE")
+    print("=" * 60)
+    for i, (name, data) in enumerate(
+        sorted(results.items(), key=lambda x: x[1]["score"], reverse=True), 1
+    ):
+        print(f"{i}. {name:12} - score={data['score']:.4f}")
+        print(f"   Trades: {data['n_trades']} | Return: {data['total_return']:.2%}")
+        print(
+            f"   Lookback={data['params']['lookback_ticks']}, Entry={data['params']['entry_threshold']:.4f}"
+        )
+        print()
+
+
 def main():
     """Ejecuta ejemplos."""
     try:
@@ -172,6 +289,11 @@ def main():
         example_grid_search()
     except Exception as e:
         print(f"Error en ejemplo 2: {e}\n")
+
+    try:
+        systematic_optimization()
+    except Exception as e:
+        print(f"Error en optimización sistemática: {e}\n")
 
 
 if __name__ == "__main__":

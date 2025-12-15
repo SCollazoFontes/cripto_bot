@@ -215,8 +215,8 @@ class BaseStrategyOptimizer(ABC):
         broker = SimulatedBroker(self.broker_config)
         strategy = self.create_strategy(params)
 
-        # Crear bar builder
-        builder = CompositeBarBuilder.from_dict(builder_config)
+        # Crear bar builder (CompositeBarBuilder no tiene from_dict en esta versión)
+        builder = CompositeBarBuilder(**builder_config)
 
         # Estado
         bars_list: list[Bar] = []
@@ -247,6 +247,8 @@ class BaseStrategyOptimizer(ABC):
 
             # Calcular señal
             decision = strategy.on_bar(bar)
+            if decision is None or not hasattr(decision, "action"):
+                continue
 
             # Ejecutar decisión
             if decision.action == "buy" and broker.position_qty == 0:
@@ -325,7 +327,7 @@ class BaseStrategyOptimizer(ABC):
                 params=params,
                 score=-1_000_000.0,  # Penalización
                 metrics=metrics,
-                status="insufficient_trades",
+                run_dir=None,
             )
 
         # Score: retorno total (simple pero efectivo)
@@ -335,7 +337,7 @@ class BaseStrategyOptimizer(ABC):
             params=params,
             score=score,
             metrics=metrics,
-            status="ok",
+            run_dir=None,
         )
 
     def _compute_metrics(
